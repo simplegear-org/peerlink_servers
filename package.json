@@ -1,0 +1,23 @@
+{
+  "name": "peerlink-servers",
+  "version": "1.0.0",
+  "description": "PeerLink server suite for WebRTC relay, signaling, TURN and proxy",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/simplegear-org/peerlink_servers.git"
+  },
+  "scripts": {
+    "start:signal": "node signal.js",
+    "start:relay": "node relay.js",
+    "start": "npm run start:signal",
+    "test": "node --test tests/**/*.test.js",
+    "test:relay": "node --test tests/relay.test.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "uuid": "^13.0.0",
+    "ws": "^8.19.0"
+  }
+}
