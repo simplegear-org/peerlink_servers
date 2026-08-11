@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  relay:
+    image: tangash/relay:latest
+    container_name: relay
+    restart: always
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      - NODE_ENV=production
+
+  signal:
+    image: tangash/signal:latest
+    container_name: signal
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+
+  coturn:
+    image: instrumentisto/coturn
+    container_name: coturn
+    restart: always
+    network_mode: host
+    environment:
+      - TURN_PORT=3478
+      - TURNS_PORT=5349
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf
+      - /etc/ssl/certs/selfsigned.crt:/etc/coturn/certs/fullchain.pem:ro
+      - /etc/ssl/private/selfsigned.key:/etc/coturn/private/privkey.pem:ro
+
+  haproxy:
+    image: haproxy:alpine
+    container_name: haproxy
+    restart: always
+    user: "0:0"
+    cap_add:
+      - NET_BIND_SERVICE
+    network_mode: host
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - /etc/ssl/certs/selfsigned.pem:/usr/local/etc/haproxy/certs/haproxy.pem:ro

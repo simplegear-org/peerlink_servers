@@ -1,0 +1,70 @@
+services:
+  push:
+    image: ${PUSH_IMAGE:-tangash/push:latest}
+    container_name: push
+    restart: always
+    expose:
+      - "4500"
+    environment:
+      - NODE_ENV=production
+      - PORT=4500
+      - PUSH_API_TOKEN=${PUSH_API_TOKEN}
+      - FCM_PROJECT_ID=${FCM_PROJECT_ID}
+      - FCM_CREDENTIALS_JSON=${FCM_CREDENTIALS_JSON}
+      - APNS_TEAM_ID=${APNS_TEAM_ID}
+      - APNS_KEY_ID=${APNS_KEY_ID}
+      - APNS_PRIVATE_KEY=${APNS_PRIVATE_KEY}
+      - APNS_VOIP_TOPIC=${APNS_VOIP_TOPIC}
+      - APNS_MESSAGES_TOPIC=${APNS_MESSAGES_TOPIC}
+      - APNS_USE_SANDBOX=${APNS_USE_SANDBOX}
+
+  push-proxy:
+    image: ${PUSH_NGINX_IMAGE:-nginx:1.27-alpine}
+    container_name: push-proxy
+    restart: always
+    depends_on:
+      - push
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/push/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./deploy/push/certbot/www:/var/www/certbot:ro
+      - ./deploy/push/letsencrypt:/etc/letsencrypt:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while :; do
+          sleep 6h & wait $$!
+          nginx -s reload || true
+        done &
+        exec nginx -g 'daemon off;'
+
+  certbot:
+    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:latest}
+    profiles:
+      - ops
+    volumes:
+      - ./deploy/push/certbot/www:/var/www/certbot
+      - ./deploy/push/letsencrypt:/etc/letsencrypt
+
+  certbot-renewer:
+    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:latest}
+    container_name: push-certbot-renewer
+    restart: always
+    depends_on:
+      - push-proxy
+    volumes:
+      - ./deploy/push/certbot/www:/var/www/certbot
+      - ./deploy/push/letsencrypt:/etc/letsencrypt
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        trap exit TERM INT
+        while :; do
+          certbot renew --webroot -w /var/www/certbot --quiet || true
+          sleep 12h & wait $$!
+        done
