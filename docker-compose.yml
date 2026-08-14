@@ -1,8 +1,8 @@
-version: '3.8'
-
 services:
   relay:
-    image: tangash/relay:latest
+    build:
+      context: .
+      target: relay
     container_name: relay
     restart: always
     ports:
@@ -11,7 +11,9 @@ services:
       - NODE_ENV=production
 
   signal:
-    image: tangash/signal:latest
+    build:
+      context: .
+      target: signal
     container_name: signal
     restart: always
     ports:
@@ -20,7 +22,7 @@ services:
       - NODE_ENV=production
 
   coturn:
-    image: instrumentisto/coturn
+    image: ${COTURN_IMAGE:-instrumentisto/coturn:4.6.2}
     container_name: coturn
     restart: always
     network_mode: host
@@ -33,7 +35,7 @@ services:
       - /etc/ssl/private/selfsigned.key:/etc/coturn/private/privkey.pem:ro
 
   haproxy:
-    image: haproxy:alpine
+    image: ${HAPROXY_IMAGE:-haproxy:2.9-alpine}
     container_name: haproxy
     restart: always
     user: "0:0"

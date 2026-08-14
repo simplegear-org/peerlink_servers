@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/simplegear-org/peerlink_servers.git}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/peerlink_servers}"
+REPO_URL="${1:-${REPO_URL:-https://github.com/simplegear-org/peerlink_servers.git}}"
+REF="${2:-${REF:-main}}"
+INSTALL_DIR="${3:-${INSTALL_DIR:-/opt/peerlink_servers}}"
 ENV_FILE="$INSTALL_DIR/.env.push.local"
 ENV_EXAMPLE_FILE="$INSTALL_DIR/.env.push.example"
 
@@ -43,7 +44,11 @@ ensure_base_system() {
 ensure_project() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     echo "Updating project in $INSTALL_DIR..."
-    git -C "$INSTALL_DIR" pull --ff-only
+    git -C "$INSTALL_DIR" fetch --tags origin
+    git -C "$INSTALL_DIR" checkout "$REF"
+    if git -C "$INSTALL_DIR" symbolic-ref -q HEAD >/dev/null; then
+      git -C "$INSTALL_DIR" pull --ff-only
+    fi
     return
   fi
 
@@ -56,9 +61,11 @@ ensure_project() {
   if [[ -z "$SUDO" ]]; then
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone "$REPO_URL" "$INSTALL_DIR"
+    git -C "$INSTALL_DIR" checkout "$REF"
   else
     $SUDO mkdir -p "$(dirname "$INSTALL_DIR")"
     $SUDO git clone "$REPO_URL" "$INSTALL_DIR"
+    $SUDO git -C "$INSTALL_DIR" checkout "$REF"
     $SUDO chown -R "$USER":"$(id -gn)" "$INSTALL_DIR" 2>/dev/null || true
   fi
 }

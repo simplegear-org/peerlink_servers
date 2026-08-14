@@ -1,5 +1,4 @@
 # PeerLink Push
-Last updated: 2026-08-01
 
 Push service for PeerLink. Stores device tokens and sends remote push:
 - message/update events via FCM/APNs alert (auto-selected by server)

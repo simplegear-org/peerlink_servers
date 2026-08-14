@@ -1,6 +1,9 @@
 services:
   push:
-    image: ${PUSH_IMAGE:-tangash/push:latest}
+    build:
+      context: .
+      target: push
+    image: ${PUSH_IMAGE:-peerlink-push:1.1.1}
     container_name: push
     restart: always
     expose:
@@ -42,7 +45,7 @@ services:
         exec nginx -g 'daemon off;'
 
   certbot:
-    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:latest}
+    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:v2.11.0}
     profiles:
       - ops
     volumes:
@@ -50,7 +53,7 @@ services:
       - ./deploy/push/letsencrypt:/etc/letsencrypt
 
   certbot-renewer:
-    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:latest}
+    image: ${PUSH_CERTBOT_IMAGE:-certbot/certbot:v2.11.0}
     container_name: push-certbot-renewer
     restart: always
     depends_on:

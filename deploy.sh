@@ -26,9 +26,17 @@ if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP=127.0.0.1
 fi
 PUBLIC_HOST=${PUBLIC_HOST:-$PUBLIC_IP}
+TURN_TOTAL_QUOTA="${TURN_TOTAL_QUOTA-}"
+TURN_USER_QUOTA="${TURN_USER_QUOTA-}"
+TURN_MAX_BPS="${TURN_MAX_BPS-10000000}"
+TURN_BPS_CAPACITY="${TURN_BPS_CAPACITY-100000000}"
 
 echo "Using PUBLIC_HOST: $PUBLIC_HOST"
 echo "Using PUBLIC_IP: $PUBLIC_IP"
+echo "Using TURN_TOTAL_QUOTA: ${TURN_TOTAL_QUOTA:-disabled}"
+echo "Using TURN_USER_QUOTA: ${TURN_USER_QUOTA:-disabled}"
+echo "Using TURN_MAX_BPS: ${TURN_MAX_BPS:-disabled}"
+echo "Using TURN_BPS_CAPACITY: ${TURN_BPS_CAPACITY:-disabled}"
 
 is_ip_address() {
   echo "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|:'
@@ -129,6 +137,32 @@ backend signal_backend
 EOF
 
 stage "10" "Generating turnserver.conf"
+validate_turn_limit() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    echo "$name must be a non-negative integer" >&2
+    exit 1
+  fi
+}
+
+TURN_LIMITS_CONFIG=""
+if [[ -n "${TURN_TOTAL_QUOTA:-}" ]]; then
+  validate_turn_limit TURN_TOTAL_QUOTA "$TURN_TOTAL_QUOTA"
+  TURN_LIMITS_CONFIG+="total-quota=${TURN_TOTAL_QUOTA}"$'\n'
+fi
+if [[ -n "${TURN_USER_QUOTA:-}" ]]; then
+  validate_turn_limit TURN_USER_QUOTA "$TURN_USER_QUOTA"
+  TURN_LIMITS_CONFIG+="user-quota=${TURN_USER_QUOTA}"$'\n'
+fi
+if [[ -n "${TURN_MAX_BPS:-}" ]]; then
+  validate_turn_limit TURN_MAX_BPS "$TURN_MAX_BPS"
+  TURN_LIMITS_CONFIG+="max-bps=${TURN_MAX_BPS}"$'\n'
+fi
+if [[ -n "${TURN_BPS_CAPACITY:-}" ]]; then
+  validate_turn_limit TURN_BPS_CAPACITY "$TURN_BPS_CAPACITY"
+  TURN_LIMITS_CONFIG+="bps-capacity=${TURN_BPS_CAPACITY}"$'\n'
+fi
 sudo bash -c "cat > turnserver.conf <<EOF
 # Listening
 listening-ip=$(echo "$PUBLIC_IP" | sed 's/[\\&/]/\\\\&/g')
@@ -142,6 +176,7 @@ external-ip=$(echo "$PUBLIC_IP" | sed 's/[\\&/]/\\\\&/g')
 # Relay ports
 min-port=49152
 max-port=51819
+${TURN_LIMITS_CONFIG}
 
 # Auth
 lt-cred-mech
@@ -164,7 +199,7 @@ no-tlsv1_1
 simple-log
 log-file=stdout
 EOF"
-sudo docker-compose up -d --force-recreate --remove-orphans relay signal haproxy coturn
+sudo docker-compose up -d --build --force-recreate --remove-orphans relay signal haproxy coturn
 
 stage "11" "Deployment complete!"
 echo "Deployment complete!"

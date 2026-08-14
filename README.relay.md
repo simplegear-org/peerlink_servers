@@ -1,5 +1,4 @@
 # PeerLink Relay
-Last updated: 2026-05-09
 
 PeerLink relay service for signed envelope delivery and encrypted blob transport.
 

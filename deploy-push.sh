@@ -404,19 +404,19 @@ main() {
     echo "Installing Cloudflare Origin CA certificate for ${PUSH_PUBLIC_HOST}."
     install_cloudflare_origin_cert
     write_tls_nginx_config
-    compose pull push push-proxy
+    compose pull push-proxy
     compose stop certbot-renewer >/dev/null 2>&1 || true
-    compose up -d --remove-orphans push push-proxy
+    compose up -d --build --remove-orphans push push-proxy
   elif has_existing_cert; then
     echo "Existing certificate found for ${PUSH_PUBLIC_HOST}; deploying HTTPS config."
     write_tls_nginx_config
-    compose pull
-    compose up -d --remove-orphans push push-proxy certbot-renewer
+    compose pull push-proxy certbot-renewer
+    compose up -d --build --remove-orphans push push-proxy certbot-renewer
   else
     echo "No certificate found for ${PUSH_PUBLIC_HOST}; bootstrapping HTTP challenge config."
     write_http_only_nginx_config
-    compose pull push push-proxy certbot certbot-renewer
-    compose up -d --remove-orphans push push-proxy
+    compose pull push-proxy certbot certbot-renewer
+    compose up -d --build --remove-orphans push push-proxy
 
     compose run --rm certbot certonly \
       --webroot \
@@ -429,7 +429,7 @@ main() {
       --keep-until-expiring
 
     write_tls_nginx_config
-    compose up -d --remove-orphans push push-proxy certbot-renewer
+    compose up -d --build --remove-orphans push push-proxy certbot-renewer
   fi
 
   echo "Push stack is running."

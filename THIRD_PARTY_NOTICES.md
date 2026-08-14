@@ -8,12 +8,12 @@ transition.
 
 Primary direct dependencies from `package.json`:
 
-- `express`
-- `google-auth-library`
-- `uuid`
-- `ws`
+- `express` 5.2.1 — MIT
+- `google-auth-library` 9.15.1 — Apache-2.0
+- `uuid` 13.0.2 — MIT
+- `ws` 8.21.3 — MIT
 
-Exact versions and package license metadata are recorded in `package-lock.json`.
+These values are taken from the current `package-lock.json`.
 
 ## Runtime Images and Services
 

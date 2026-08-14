@@ -1,5 +1,4 @@
 # PeerLink server suite
-Обновлено: 2026-08-01
 
 Этот репозиторий содержит набор серверных сервисов для PeerLink:
 - `relay` — HTTP relay и blob API (`store/fetch/ack`, `group/store`, `blob upload/download`)
@@ -7,8 +6,6 @@
 - `push` — сервер отправки push через Firebase Cloud Messaging (FCM)
 - `coturn` — TURN сервер для WebRTC, с опциональным TURNS на 5349
 - `haproxy` — reverse proxy и TLS termination
-
-> Этот проект написан исключительно силами ИИ-агентов; я выступаю только в роли координатора и ведущего разработки. Ни один символ кода не написан вручную.
 
 ## Общая архитектура
 
@@ -190,19 +187,42 @@ Corresponding Source, `SOURCE_CODE_URL` должен указывать на и�
 
 ## Быстрая установка
 
-Для автоматической установки скачайте и запустите bootstrap-скрипт:
+Для воспроизводимого source deployment checkout-ните public source tag и
+соберите контейнеры из этого исходного кода:
+
+```bash
+git clone https://github.com/simplegear-org/peerlink_servers.git
+cd peerlink_servers
+git checkout source-v1.1.0
+docker compose build
+docker compose up -d
+```
+
+Для автоматической установки текущего/default ref:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash
 ```
 
-Или клонируйте репозиторий и запустите вручную:
+Для установки конкретного public source tag:
 
 ```bash
-git clone https://github.com/simplegear-org/peerlink_servers.git
-cd peerlink_servers
-./deploy.sh
+wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash -s -- https://github.com/simplegear-org/peerlink_servers.git source-v1.1.0
 ```
+
+### Source-build и official image modes
+
+Default public self-hosted model — source-build mode: `docker-compose.yml` и
+`docker-compose.push.yml` собирают PeerLink server containers из текущего
+checked-out source tree.
+
+Official prebuilt image mode можно использовать через image variables вроде
+`PUSH_IMAGE`, но release deployment должен использовать version-specific image
+tags или immutable digests, а не floating `latest` tags.
+
+Runtime source metadata должны описывать реально запущенный source. Official
+deployments могут задавать `SOURCE_VERSION` и `SOURCE_CODE_URL`, но эти
+значения должны соответствовать реально запущенному image/source.
 
 ### Локальный запуск
 
@@ -229,6 +249,7 @@ npm run start:push
 Используйте отдельный файл для push-стека:
 
 ```bash
+docker compose -f docker-compose.push.yml build
 docker compose -f docker-compose.push.yml up -d
 ```
 
@@ -292,6 +313,11 @@ Public License version 3 only (AGPL-3.0-only).
 - LICENSE-HISTORY.md
 - COMMERCIAL-LICENSING.md
 - BRANDING.md
+- SECURITY.md
+- CONTRIBUTING.md
+- CLA-POLICY.md
+- GITHUB_PUBLIC_MIRROR_SETTINGS.md
+- SOURCE_SNAPSHOT.md
 - THIRD_PARTY_NOTICES.md
 
 ## Модель репозитория
@@ -308,9 +334,9 @@ Git-история здесь представляет публичные source
 для воспроизведения внутренней истории разработки проекта.
 
 Публичный mirror содержит минимальный source-distribution набор для
-опубликованных серверов: license и third-party notices, brand policy, публичные
-README, package manifests, Docker/Compose/deploy scripts, runtime server source
-и `source-info.js`.
+опубликованных серверов: license и third-party notices, brand/security/
+contributor policy documents, публичные README, package manifests,
+Docker/Compose/deploy scripts, runtime server source и `source-info.js`.
 
 Рекомендация для Cloudflare:
 - для этого стека по умолчанию использовать `DNS only` (серое облако)
@@ -392,14 +418,46 @@ curl -i http://127.0.0.1:4000/relay/probe \
   - `turn:PUBLIC_HOST:3478?transport=udp`
   - `turn:PUBLIC_HOST:3478?transport=tcp`
 
-> Для запуска с кастомными TURN-учётными данными задайте переменные окружения `TURN_USER` и `TURN_PASSWORD` перед вызовом `./deploy.sh`.
->
-> Пример:
-> ```bash
-> PUBLIC_HOST=peerlink.example.com TURN_USER=myuser TURN_PASSWORD=strongpass ./deploy.sh
-> ```
->
-> Если нужно использовать другую ОС, `deploy.sh` потребуется адаптировать.
+### TURN compatibility credentials
+
+PeerLink X сейчас использует фиксированные TURN compatibility credentials:
+
+- Username: `peerlink`
+- Password: `peerlink`
+
+Эти значения являются частью текущего client/server compatibility contract
+PeerLink X и не предназначены для роли секретных административных credentials.
+
+Изменение этих значений в self-hosted PeerLink Servers deployment не позволит
+текущим клиентам PeerLink X использовать этот TURN server, если клиент тоже не
+обновлён на те же credentials.
+
+Поэтому для текущих PeerLink X deployment operators должны оставлять эти
+compatibility credentials без изменений.
+
+Защиту TURN resources следует строить через network restrictions, allocation
+limits и bandwidth limits, а не через трактовку этих credentials как секретных
+access-control credentials.
+
+`./deploy.sh` по умолчанию применяет bandwidth limits:
+
+- `TURN_MAX_BPS=10000000`
+- `TURN_BPS_CAPACITY=100000000`
+
+Coturn resource limits можно изменить перед deployment:
+
+- `TURN_TOTAL_QUOTA`
+- `TURN_USER_QUOTA`
+- `TURN_MAX_BPS`
+- `TURN_BPS_CAPACITY`
+
+Эти значения опциональны и должны быть неотрицательными целыми числами. Пустое
+значение отключает default. С `TURN_TOTAL_QUOTA` и `TURN_USER_QUOTA` нужно быть
+осторожным: текущие deployment могут полагаться на один TURN server, а клиенты
+PeerLink X используют один TURN username, поэтому низкие allocation quotas могут
+сломать легитимные одновременные звонки.
+
+Если нужно использовать другую ОС, `deploy.sh` потребуется адаптировать.
 
 ## API signaling
 

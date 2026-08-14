@@ -1,5 +1,4 @@
 # PeerLink Signal
-Last updated: 2026-04-13
 
 PeerLink signaling server for WebRTC peer registration, offer/answer exchange, and ICE candidate routing.
 
