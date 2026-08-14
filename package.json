@@ -1,9 +1,9 @@
 {
   "name": "peerlink-servers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PeerLink server suite for WebRTC relay, signaling, TURN and proxy",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/simplegear-org/peerlink_servers.git"

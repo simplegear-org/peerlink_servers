@@ -1,10 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import express from 'express';
 import crypto from 'crypto';
 import http2 from 'http2';
 import { GoogleAuth } from 'google-auth-library';
+import { sourceInfo } from './source-info.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.PUSH_BODY_LIMIT || '2mb' }));
+const sourceMetadata = sourceInfo();
 
 app.use((req, res, next) => {
   const startedAt = Date.now();
@@ -902,6 +906,7 @@ app.get('/health', (_req, res) => {
   cleanupSignedRequestIds();
   res.json({
     ok: true,
+    source: sourceMetadata,
     providers: {
       fcmConfigured: Boolean(FCM_PROJECT_ID),
       apnsVoipConfigured: isApnsVoipConfigured(),
@@ -932,6 +937,10 @@ app.get('/health', (_req, res) => {
     },
     ts: Date.now(),
   });
+});
+
+app.get('/.well-known/peerlink-source', (_req, res) => {
+  res.json(sourceMetadata);
 });
 
 app.post('/send', requireAuth, async (req, res) => {

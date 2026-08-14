@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import express from 'express';
 import crypto from 'crypto';
+import { sourceInfo } from './source-info.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.RELAY_BODY_LIMIT || '20mb' }));
+const sourceMetadata = sourceInfo();
 
 const PORT = process.env.PORT || 4000;
 const TTL_SECONDS = Number.parseInt(process.env.RELAY_TTL_SECONDS || '86400', 10);
@@ -165,7 +169,11 @@ function verifyEd25519Signature({ payloadBytes, signatureB64, signingPubB64 }) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, ts: nowMs() });
+  res.json({ ok: true, ts: nowMs(), source: sourceMetadata });
+});
+
+app.get('/.well-known/peerlink-source', (_req, res) => {
+  res.json(sourceMetadata);
 });
 
 app.get('/relay/capabilities', (_req, res) => {
@@ -173,6 +181,7 @@ app.get('/relay/capabilities', (_req, res) => {
     ok: true,
     service: 'peerlink-relay',
     protocolVersion: '1',
+    source: sourceMetadata,
     features: {
       health: true,
       probe: true,

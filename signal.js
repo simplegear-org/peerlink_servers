@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import WebSocket, { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { sourceInfo } from './source-info.js';
 
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const wss = new WebSocketServer({ port: PORT });
+const sourceMetadata = sourceInfo();
 const REGISTER_AUTH_SCHEME = 'peerlink-ed25519-v1';
 const REGISTER_MAX_SKEW_MS = 30 * 1000;
 const NONCE_TTL_MS = 2 * 60 * 1000;
@@ -300,6 +304,7 @@ wss.on('connection', (ws) => {
           payload: {
             peerId,
             sessionId: null, // необязательно
+            source: sourceMetadata,
           },
         });
         // Push-событие online для остальных.

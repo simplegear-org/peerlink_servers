@@ -129,6 +129,32 @@ TURN/TURNS is not proxied through HAProxy:
 
 ## Configuration
 
+### Source availability
+
+PeerLink Servers exposes source metadata for AGPL source availability:
+
+```text
+GET /.well-known/peerlink-source
+```
+
+Relay and push expose this endpoint over HTTP. Bootstrap signaling also includes
+the same metadata in the WebSocket `register_ack` payload.
+
+Official deployments should set:
+
+- `SOURCE_VERSION`
+- `SOURCE_CODE_URL`
+
+For official source snapshots, `SOURCE_CODE_URL` should point to the immutable
+public source tag for the running version.
+
+If operators deploy a modified AGPL version and are required to provide
+Corresponding Source, `SOURCE_CODE_URL` must point to the source corresponding
+to their deployed version, not merely to the upstream PeerLink repository.
+
+This mechanism helps users find source code. Operators remain responsible for
+complying with the license.
+
 ### Docker Compose
 
 File: `docker-compose.yml`
@@ -245,6 +271,41 @@ The push API is exposed at:
 ```text
 https://<PUSH_PUBLIC_HOST>
 ```
+
+## Licensing
+
+PeerLink Servers is open-source software distributed under the GNU Affero
+General Public License version 3 only (AGPL-3.0-only).
+
+Commercial use under AGPL-3.0-only is permitted.
+
+Organizations that require different proprietary, OEM, white-label or
+enterprise licensing terms may request a separate commercial agreement.
+
+See:
+
+- LICENSE
+- LICENSE-HISTORY.md
+- COMMERCIAL-LICENSING.md
+- BRANDING.md
+- THIRD_PARTY_NOTICES.md
+
+## Repository Model
+
+This repository is the public source-distribution mirror for PeerLink Servers.
+
+Development is performed in a separate development repository.
+
+This repository contains clean source snapshots corresponding to public
+PeerLink Servers releases.
+
+Its Git history represents public source snapshots and is not intended to
+reproduce the project's private internal development history.
+
+The public mirror contains the minimum source-distribution set required for
+the released servers: license and third-party notices, branding policy, public
+README files, package manifests, Docker/Compose/deploy scripts, runtime server
+source, and `source-info.js`.
 
 ### Relay compatibility smoke-check
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-only
 
 # Script for automatic deployment of PeerLink server suite.
 # Public client contract:

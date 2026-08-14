@@ -134,6 +134,32 @@ TURN/TURNS не проксируется через HAProxy:
 
 ## Конфигурация
 
+### Доступность исходного кода
+
+PeerLink Servers публикует source metadata для AGPL source availability:
+
+```text
+GET /.well-known/peerlink-source
+```
+
+Relay и push отдают этот endpoint по HTTP. Bootstrap signaling также включает
+эти metadata в WebSocket payload `register_ack`.
+
+Официальные deployments должны задавать:
+
+- `SOURCE_VERSION`
+- `SOURCE_CODE_URL`
+
+Для официальных source snapshot-ов `SOURCE_CODE_URL` должен указывать на
+immutable public source tag запущенной версии.
+
+Если оператор разворачивает измененную AGPL-версию и обязан предоставить
+Corresponding Source, `SOURCE_CODE_URL` должен указывать на исходный код именно
+его развернутой версии, а не просто на upstream PeerLink repository.
+
+Этот механизм помогает пользователям найти исходный код. Операторы остаются
+ответственными за соблюдение лицензии.
+
 ### Docker Compose
 
 Файл: `docker-compose.yml`
@@ -249,6 +275,42 @@ apt-get update && apt-get install -y ca-certificates curl && curl -fsSL https://
 ```text
 https://<PUSH_PUBLIC_HOST>
 ```
+
+## Лицензирование
+
+PeerLink Servers — open-source ПО, распространяемое под GNU Affero General
+Public License version 3 only (AGPL-3.0-only).
+
+Коммерческое использование под AGPL-3.0-only разрешено.
+
+Организации, которым нужны другие proprietary, OEM, white-label или enterprise
+условия, могут запросить отдельное коммерческое соглашение.
+
+См.:
+
+- LICENSE
+- LICENSE-HISTORY.md
+- COMMERCIAL-LICENSING.md
+- BRANDING.md
+- THIRD_PARTY_NOTICES.md
+
+## Модель репозитория
+
+Этот репозиторий является публичным mirror-репозиторием исходных snapshot-ов
+PeerLink Servers.
+
+Разработка ведется в отдельном development-репозитории.
+
+Этот репозиторий содержит чистые snapshot-ы исходного кода, соответствующие
+публичным релизам PeerLink Servers.
+
+Git-история здесь представляет публичные source snapshot-ы и не предназначена
+для воспроизведения внутренней истории разработки проекта.
+
+Публичный mirror содержит минимальный source-distribution набор для
+опубликованных серверов: license и third-party notices, brand policy, публичные
+README, package manifests, Docker/Compose/deploy scripts, runtime server source
+и `source-info.js`.
 
 Рекомендация для Cloudflare:
 - для этого стека по умолчанию использовать `DNS only` (серое облако)

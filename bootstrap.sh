@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-only
 
 # Bootstrap script for PeerLink server suite
 # Clones the repository and runs deploy.sh
