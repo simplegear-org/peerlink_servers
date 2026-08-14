@@ -3,7 +3,7 @@ services:
     build:
       context: .
       target: push
-    image: ${PUSH_IMAGE:-peerlink-push:1.1.1}
+    image: ${PUSH_IMAGE:-peerlink-push:1.1.2}
     container_name: push
     restart: always
     expose:

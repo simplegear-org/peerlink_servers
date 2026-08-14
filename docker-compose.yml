@@ -22,7 +22,7 @@ services:
       - NODE_ENV=production
 
   coturn:
-    image: ${COTURN_IMAGE:-instrumentisto/coturn:4.6.2}
+    image: ${COTURN_IMAGE:-coturn/coturn:4.6.2}
     container_name: coturn
     restart: always
     network_mode: host

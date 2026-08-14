@@ -99,7 +99,7 @@ Push write contract:
 
 ### coturn
 
-The `instrumentisto/coturn` service runs in `network_mode: host` and exposes:
+The `coturn/coturn` service runs in `network_mode: host` and exposes:
 - TURN: 3478
 - optional TURNS: 5349
 - Relay ports: `49152-51819` (UDP/TCP) for TURN media relay candidates.

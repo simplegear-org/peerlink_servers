@@ -104,7 +104,7 @@ HTTP-сервис, который хранит токены устройств �
 
 ### coturn
 
-Сервис `instrumentisto/coturn` работает в `network_mode: host` и предоставляет:
+Сервис `coturn/coturn` работает в `network_mode: host` и предоставляет:
 - TURN: 3478
 - опциональный TURNS: 5349
 - Relay-порты: `49152-51819` (UDP/TCP), используются для медиа relay-кандидатов.
