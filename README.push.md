@@ -226,6 +226,39 @@ Certificate paths on host:
 - `deploy/push/letsencrypt/live/<PUSH_PUBLIC_HOST>/fullchain.pem`
 - `deploy/push/letsencrypt/live/<PUSH_PUBLIC_HOST>/privkey.pem`
 
+## Observability
+
+The push stack includes production monitoring:
+- `push-observability-db` stores observed self-hosted servers from push payloads
+- `server-checker` periodically checks observed relay/signal/TURN endpoints
+- `prometheus` scrapes internal `push:4500/metrics`
+- `grafana` is exposed only on the origin host
+
+`/metrics` is intentionally not proxied by the public `push-proxy`.
+
+New environment variables:
+- `PUSH_OBSERVABILITY_POSTGRES_PASSWORD`
+- `GRAFANA_ADMIN_USER`
+- `GRAFANA_ADMIN_PASSWORD`
+- `PEERLINK_SERVER_CHECK_INTERVAL_MS`
+- `PEERLINK_SERVER_CHECK_TIMEOUT_MS`
+
+Observed servers are extracted from `payload.servers`, `signalServers`,
+`relayServers`, `turnServers`, and `iceServers` in `/events/push` and `/send`.
+The database keeps per-server usage counters for message/group events, calls,
+checker status, and checker latency.
+
+For a public site allowlist, use only fresh healthy servers:
+
+```sql
+select normalized_url
+from observed_servers
+where status = 'healthy'
+  and last_checked_at > now() - interval '15 minutes'
+  and seen_count >= 3
+order by last_check_latency_ms asc nulls last, last_seen_at desc;
+```
+
 ## Cloudflare
 
 Recommended default for this stack:

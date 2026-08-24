@@ -245,6 +245,9 @@ npm run start:push
 - `push-proxy` (`nginx`) на публичных `80/443`
 - `certbot` для первичного выпуска сертификата
 - `certbot-renewer` для автоматического продления сертификатов
+- `push-observability-db` для каталога найденных self-hosted серверов
+- `server-checker` для проверки найденных relay/signal/TURN endpoint-ов
+- `prometheus` и `grafana` для метрик и графиков
 
 Используйте отдельный файл для push-стека:
 
@@ -267,6 +270,8 @@ docker compose -f docker-compose.push.yml up -d
 - `APNS_PRIVATE_KEY`
 - `APNS_VOIP_TOPIC` (должен оканчиваться на `.voip`)
 - `APNS_MESSAGES_TOPIC` (полный app topic для alert-push, без `.voip`)
+- `PUSH_OBSERVABILITY_POSTGRES_PASSWORD`
+- `GRAFANA_ADMIN_PASSWORD`
 
 Готовый скрипт запуска:
 
@@ -290,11 +295,35 @@ apt-get update && apt-get install -y ca-certificates curl && curl -fsSL https://
 - переключает `nginx` на HTTPS
 - запускает отдельный контейнер с циклом автопродления
 - умеет `PUSH_TLS_PROVIDER=cloudflare_origin` с Cloudflare Origin CA вместо certbot для оранжевого облака
+- запускает Postgres, Prometheus, Grafana и checker для мониторинга push/server discovery
 
 Публичный endpoint push API:
 
 ```text
 https://<PUSH_PUBLIC_HOST>
+```
+
+### Мониторинг push и self-hosted серверов
+
+`push` отдаёт внутренний `GET /metrics` для Prometheus. Этот endpoint не
+проксируется наружу через публичный `push-proxy`.
+
+Self-hosted серверы извлекаются из `payload.servers`, `signalServers`,
+`relayServers`, `turnServers` и `iceServers` в `/events/push` и `/send`.
+Postgres хранит полный список серверов, счётчики сообщений/звонков, статус
+проверки и latency последней проверки.
+
+Grafana доступна только на origin-хосте.
+
+Для сайта публикуйте только свежие healthy серверы:
+
+```sql
+select normalized_url
+from observed_servers
+where status = 'healthy'
+  and last_checked_at > now() - interval '15 minutes'
+  and seen_count >= 3
+order by last_check_latency_ms asc nulls last, last_seen_at desc;
 ```
 
 ## Лицензирование

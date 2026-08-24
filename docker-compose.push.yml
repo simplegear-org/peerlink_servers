@@ -3,7 +3,7 @@ services:
     build:
       context: .
       target: push
-    image: ${PUSH_IMAGE:-peerlink-push:1.1.2}
+    image: ${PUSH_IMAGE:-peerlink-push:1.2.0-2026082301}
     container_name: push
     restart: always
     expose:
@@ -20,6 +20,65 @@ services:
       - APNS_VOIP_TOPIC=${APNS_VOIP_TOPIC}
       - APNS_MESSAGES_TOPIC=${APNS_MESSAGES_TOPIC}
       - APNS_USE_SANDBOX=${APNS_USE_SANDBOX}
+      - PUSH_OBSERVABILITY_DATABASE_URL=postgres://peerlink:${PUSH_OBSERVABILITY_POSTGRES_PASSWORD:-peerlink_observability}@push-observability-db:5432/peerlink_observability
+    depends_on:
+      - push-observability-db
+
+  server-checker:
+    build:
+      context: .
+      target: server-checker
+    image: ${SERVER_CHECKER_IMAGE:-server-checker:1.2.0-2026082301}
+    container_name: peerlink-server-checker
+    restart: always
+    depends_on:
+      - push-observability-db
+    environment:
+      - NODE_ENV=production
+      - PUSH_OBSERVABILITY_DATABASE_URL=postgres://peerlink:${PUSH_OBSERVABILITY_POSTGRES_PASSWORD:-peerlink_observability}@push-observability-db:5432/peerlink_observability
+      - PEERLINK_SERVER_CHECK_INTERVAL_MS=${PEERLINK_SERVER_CHECK_INTERVAL_MS:-300000}
+      - PEERLINK_SERVER_CHECK_TIMEOUT_MS=${PEERLINK_SERVER_CHECK_TIMEOUT_MS:-5000}
+
+  push-observability-db:
+    image: ${PUSH_OBSERVABILITY_POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: push-observability-db
+    restart: always
+    environment:
+      - POSTGRES_DB=peerlink_observability
+      - POSTGRES_USER=peerlink
+      - POSTGRES_PASSWORD=${PUSH_OBSERVABILITY_POSTGRES_PASSWORD:-peerlink_observability}
+    volumes:
+      - push-observability-db:/var/lib/postgresql/data
+
+  prometheus:
+    image: ${PUSH_PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}
+    container_name: push-prometheus
+    restart: always
+    depends_on:
+      - push
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/push/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - push-prometheus:/prometheus
+
+  grafana:
+    image: ${PUSH_GRAFANA_IMAGE:-grafana/grafana:11.4.0}
+    container_name: push-grafana
+    restart: always
+    depends_on:
+      - prometheus
+      - push-observability-db
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-change_me}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - PUSH_OBSERVABILITY_POSTGRES_PASSWORD=${PUSH_OBSERVABILITY_POSTGRES_PASSWORD:-peerlink_observability}
+    volumes:
+      - ./deploy/push/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - push-grafana:/var/lib/grafana
 
   push-proxy:
     image: ${PUSH_NGINX_IMAGE:-nginx:1.27-alpine}
@@ -71,3 +130,8 @@ services:
           certbot renew --webroot -w /var/www/certbot --quiet || true
           sleep 12h & wait $$!
         done
+
+volumes:
+  push-observability-db:
+  push-prometheus:
+  push-grafana:

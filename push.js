@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import http2 from 'http2';
 import { GoogleAuth } from 'google-auth-library';
 import { sourceInfo } from './source-info.js';
+import { PushObservability } from './observability.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.PUSH_BODY_LIMIT || '2mb' }));
@@ -51,6 +52,8 @@ const tokenToOwner = new Map(); // fcmToken -> { userId, deviceId }
 const voipDevicesByUser = new Map(); // userId -> Map<deviceId, voipDevice>
 const voipTokenToOwner = new Map(); // voipToken -> { userId, deviceId }
 const signedRequestIds = new Map(); // id -> expiresAtMs
+const observability = new PushObservability();
+await observability.init();
 
 function cleanupDedupCache() {
   const now = Date.now();
@@ -939,6 +942,20 @@ app.get('/health', (_req, res) => {
   });
 });
 
+app.get('/metrics', async (_req, res) => {
+  cleanupDedupCache();
+  cleanupSignedRequestIds();
+  const body = await observability.metrics({
+    devicesByUser,
+    tokenToOwner,
+    voipDevicesByUser,
+    voipTokenToOwner,
+    dedupCache,
+    signedRequestIds,
+  });
+  res.type('text/plain; version=0.0.4; charset=utf-8').send(body);
+});
+
 app.get('/.well-known/peerlink-source', (_req, res) => {
   res.json(sourceMetadata);
 });
@@ -954,8 +971,10 @@ app.post('/send', requireAuth, async (req, res) => {
   }
   const dedup = tryAcquireDedup(body);
   if (dedup.deduped) {
+    observability.recordPushEvent({ payload: body.data, delivery: { standard: true, voip: false }, deduped: true });
     return res.json({ ok: true, provider: 'fcm', deduped: true });
   }
+  observability.recordPushEvent({ payload: body.data, delivery: { standard: true, voip: false } });
   try {
     const result = await sendFcm({
       token,
@@ -963,8 +982,22 @@ app.post('/send', requireAuth, async (req, res) => {
       notification: body.notification,
       android: body.android,
     });
+    observability.recordPushResult({
+      payload: body.data,
+      deliveryName: 'standard',
+      provider: result.provider,
+      sent: 1,
+      failed: 0,
+    });
     return res.json({ ok: true, provider: result.provider });
   } catch (error) {
+    observability.recordPushResult({
+      payload: body.data,
+      deliveryName: 'standard',
+      provider: 'fcm',
+      sent: 0,
+      failed: 1,
+    });
     return res.status(502).json({
       ok: false,
       error: 'push_send_failed',
@@ -1013,6 +1046,7 @@ app.post('/devices/register', requireAuth, requireSignedRequest(buildRegisterSig
       appVersion,
     });
   }
+  observability.recordDeviceRegister({ platform, messageProvider });
   return res.json({ ok: true, device: devicePublicView(device) });
 });
 
@@ -1023,7 +1057,14 @@ app.post('/devices/unregister', requireAuth, requireSignedRequest(buildUnregiste
   if (!userId || !deviceId || !token) {
     return res.status(400).json({ error: 'invalid_payload' });
   }
+  const existing = devicesByUser.get(userId)?.get(deviceId);
   const ok = unregisterDevice({ userId, deviceId, token });
+  if (ok) {
+    observability.recordDeviceUnregister({
+      platform: existing?.platform || 'unknown',
+      messageProvider: existing?.messageProvider || 'unknown',
+    });
+  }
   return res.json({ ok });
 });
 
@@ -1060,8 +1101,10 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   };
   const dedup = tryAcquireDedup(dedupBody);
   if (dedup.deduped) {
+    observability.recordPushEvent({ payload, delivery, deduped: true });
     return res.json({ ok: true, deduped: true, sent: 0, failed: 0 });
   }
+  observability.recordPushEvent({ payload, delivery });
   const standardTargets = delivery.standard
     ? getActiveTokensForUsers(recipientUserIds)
     : [];
@@ -1124,11 +1167,25 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         });
       }
       standardSent += 1;
+      observability.recordPushResult({
+        payload,
+        deliveryName: 'standard',
+        provider,
+        sent: 1,
+        failed: 0,
+      });
       console.log(
         `[push] standard send ok sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId} provider=${provider}`,
       );
     } catch (error) {
       standardFailed += 1;
+      observability.recordPushResult({
+        payload,
+        deliveryName: 'standard',
+        provider: (target.messageProvider || 'fcm').toLowerCase(),
+        sent: 0,
+        failed: 1,
+      });
       console.warn(
         `[push] standard send failed sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId}:`,
         error instanceof Error ? error.message : String(error),
@@ -1151,11 +1208,25 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           },
         });
         voipSent += 1;
+        observability.recordPushResult({
+          payload,
+          deliveryName: 'voip',
+          provider: 'apns',
+          sent: 1,
+          failed: 0,
+        });
         console.log(
           `[push] voip send ok sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId}`,
         );
       } catch (error) {
         voipFailed += 1;
+        observability.recordPushResult({
+          payload,
+          deliveryName: 'voip',
+          provider: 'apns',
+          sent: 0,
+          failed: 1,
+        });
         if (shouldInvalidateVoipToken(error)) {
           const invalidated = unregisterVoipDevice({
             userId: target.userId,

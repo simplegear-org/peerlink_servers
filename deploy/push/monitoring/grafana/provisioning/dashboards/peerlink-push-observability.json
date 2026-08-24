@@ -1,0 +1,115 @@
+{
+  "uid": "peerlink-push-observability",
+  "title": "PeerLink Push Observability",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Registered Devices",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "peerlink_push_registered_devices",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Observed Servers",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "peerlink_observed_servers_total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Push Events",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (event_type) (rate(peerlink_push_events_total[5m]))",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Push Deliveries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (event_type, delivery, provider) (rate(peerlink_push_sent_total[5m]))",
+          "legendFormat": "{{event_type}} {{delivery}} {{provider}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (event_type, delivery, provider) (rate(peerlink_push_failed_total[5m]))",
+          "legendFormat": "failed {{event_type}} {{delivery}} {{provider}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Servers By Status",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "peerlink_observed_servers_by_status",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Observed Servers",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select normalized_url, status, seen_count, message_seen_count, call_seen_count, last_check_latency_ms, first_seen_at, last_seen_at, last_checked_at, last_error from observed_servers order by last_seen_at desc limit 500",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Per-server Hourly Usage",
+      "gridPos": { "x": 0, "y": 30, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "time_series",
+          "rawSql": "select u.bucket_at as time, s.normalized_url as metric, u.message_count + u.call_count as value from server_usage_hourly u join observed_servers s on s.id = u.server_id where $__timeFilter(u.bucket_at) order by 1",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,7 @@ DEPLOY_DIR="$ROOT_DIR/deploy/push"
 NGINX_DIR="$DEPLOY_DIR/nginx/conf.d"
 WEBROOT_DIR="$DEPLOY_DIR/certbot/www"
 LETSENCRYPT_DIR="$DEPLOY_DIR/letsencrypt"
+PUSH_RUNTIME_SERVICES=(push server-checker push-observability-db prometheus grafana push-proxy)
 
 SUDO=""
 if [[ "${EUID}" -ne 0 ]]; then
@@ -89,6 +90,8 @@ validate_env() {
   require_var "APNS_VOIP_TOPIC"
   require_var "APNS_MESSAGES_TOPIC"
   require_var "APNS_USE_SANDBOX"
+  require_var "PUSH_OBSERVABILITY_POSTGRES_PASSWORD"
+  require_var "GRAFANA_ADMIN_PASSWORD"
   require_bool "APNS_USE_SANDBOX"
 
   if ! node -e 'JSON.parse(process.env.FCM_CREDENTIALS_JSON)' >/dev/null 2>&1; then
@@ -404,19 +407,19 @@ main() {
     echo "Installing Cloudflare Origin CA certificate for ${PUSH_PUBLIC_HOST}."
     install_cloudflare_origin_cert
     write_tls_nginx_config
-    compose pull push-proxy
+    compose pull push-proxy push-observability-db prometheus grafana
     compose stop certbot-renewer >/dev/null 2>&1 || true
-    compose up -d --build --remove-orphans push push-proxy
+    compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}"
   elif has_existing_cert; then
     echo "Existing certificate found for ${PUSH_PUBLIC_HOST}; deploying HTTPS config."
     write_tls_nginx_config
-    compose pull push-proxy certbot-renewer
-    compose up -d --build --remove-orphans push push-proxy certbot-renewer
+    compose pull push-proxy certbot-renewer push-observability-db prometheus grafana
+    compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}" certbot-renewer
   else
     echo "No certificate found for ${PUSH_PUBLIC_HOST}; bootstrapping HTTP challenge config."
     write_http_only_nginx_config
-    compose pull push-proxy certbot certbot-renewer
-    compose up -d --build --remove-orphans push push-proxy
+    compose pull push-proxy certbot certbot-renewer push-observability-db prometheus grafana
+    compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}"
 
     compose run --rm certbot certonly \
       --webroot \
@@ -429,7 +432,7 @@ main() {
       --keep-until-expiring
 
     write_tls_nginx_config
-    compose up -d --build --remove-orphans push push-proxy certbot-renewer
+    compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}" certbot-renewer
   fi
 
   echo "Push stack is running."
