@@ -79,12 +79,17 @@
 HTTP-сервис, который хранит токены устройств и отправляет push:
 - обычные события/уведомления через FCM и APNs alert
 - входящие звонки через data-only FCM и APNs VoIP (канал выбирает сервер)
+- moderation reports, appeals и peer score status для UGC/moderation flow
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
 - `POST /devices/register` — регистрация/обновление устройства (`userId`, `deviceId`, `messageToken`, `messageProvider`, `voipToken?`, `platform`)
 - `POST /devices/unregister` — деактивация устройства
 - `GET /devices/by-user/:userId` — список устройств пользователя
 - `POST /events/push` — универсальный signed fanout push-событий по устройствам получателей
+- `POST /moderation/reports` — прием жалоб
+- `GET /moderation/status` — текущий moderation score/status по `peerId`
+- `POST /moderation/appeals` — прием апелляций
+- `GET /admin/reports` и `POST /admin/reports/:id/action` — очередь и действия модератора
 - `GET /health` — статус конфигурации FCM и защитных механизмов
 
 Для write-endpoint’ов `push` используется relay-подобная Ed25519 проверка:
@@ -101,6 +106,14 @@ HTTP-сервис, который хранит токены устройств �
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
+
+Moderation scoring хранится в Postgres observability DB:
+- 10 жалоб на один `reportedPeerId` переводят peer в `warning`
+- 20 жалоб переводят peer в `banned`
+- admin endpoints защищены `MODERATION_ADMIN_TOKEN` или, если он не задан, `PUSH_API_TOKEN`
+- клиентские `POST /moderation/reports` и `POST /moderation/appeals` защищены
+  Ed25519-подписью peer, без доставки admin token в приложение
+- отдельный moderator UI поднимается в push-only compose на `127.0.0.1:4501`
 
 ### coturn
 

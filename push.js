@@ -28,6 +28,15 @@ app.use((req, res, next) => {
 
 const PORT = Number.parseInt(process.env.PORT || '4500', 10);
 const API_TOKEN = (process.env.PUSH_API_TOKEN || '').trim();
+const MODERATION_ADMIN_TOKEN = (process.env.MODERATION_ADMIN_TOKEN || API_TOKEN).trim();
+const MODERATION_WARNING_REPORT_THRESHOLD = positiveInt(
+  process.env.MODERATION_WARNING_REPORT_THRESHOLD,
+  10,
+);
+const MODERATION_BAN_REPORT_THRESHOLD = positiveInt(
+  process.env.MODERATION_BAN_REPORT_THRESHOLD,
+  20,
+);
 const DEDUP_TTL_SECONDS = Number.parseInt(process.env.PUSH_DEDUP_TTL_SECONDS || '30', 10);
 const MAX_DEVICES_PER_USER = Number.parseInt(process.env.PUSH_MAX_DEVICES_PER_USER || '20', 10);
 const SIGNATURE_SKEW_SECONDS = Number.parseInt(process.env.PUSH_SIGNATURE_SKEW_SECONDS || '120', 10);
@@ -54,6 +63,16 @@ const voipTokenToOwner = new Map(); // voipToken -> { userId, deviceId }
 const signedRequestIds = new Map(); // id -> expiresAtMs
 const observability = new PushObservability();
 await observability.init();
+
+const moderationThresholds = {
+  warningThreshold: MODERATION_WARNING_REPORT_THRESHOLD,
+  banThreshold: MODERATION_BAN_REPORT_THRESHOLD,
+};
+
+function positiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function cleanupDedupCache() {
   const now = Date.now();
@@ -147,6 +166,22 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'unauthorized' });
 }
 
+function requireAdminAuth(req, res, next) {
+  if (!MODERATION_ADMIN_TOKEN) {
+    return res.status(503).json({ error: 'moderation_admin_token_required' });
+  }
+  const token = parseBearerToken(req.headers.authorization);
+  if (token && token === MODERATION_ADMIN_TOKEN) {
+    return next();
+  }
+  console.warn('[push][moderation][auth] unauthorized', {
+    path: req.originalUrl,
+    hasAuthorizationHeader: Boolean(req.headers.authorization),
+    tokenLength: token ? token.length : 0,
+  });
+  return res.status(401).json({ error: 'unauthorized' });
+}
+
 function normalizeTokenInput(token) {
   if (typeof token !== 'string') return null;
   const trimmed = token.trim();
@@ -174,6 +209,63 @@ function normalizeStringValue(value, maxLen = 512) {
 
 function normalizeUserId(value) {
   return normalizeStringValue(value, 128);
+}
+
+function normalizePeerId(value) {
+  return normalizeStringValue(value, 128);
+}
+
+function normalizeModerationReason(value) {
+  const reason = normalizeStringValue(value, 64)?.toLowerCase();
+  if (!reason) return null;
+  const allowed = new Set(['spam', 'harassment', 'threats', 'illegal_content', 'illegalcontent', 'abusive_behavior', 'abusivebehavior', 'other']);
+  if (!allowed.has(reason)) return null;
+  if (reason === 'illegalcontent') return 'illegal_content';
+  if (reason === 'abusivebehavior') return 'abusive_behavior';
+  return reason;
+}
+
+function normalizeModerationReport(body) {
+  if (!body || typeof body !== 'object') return null;
+  const reporterPeerId = normalizePeerId(body.reporterPeerId || body.reporter_peer_id || body.from);
+  const reportedPeerId = normalizePeerId(body.reportedPeerId || body.reported_peer_id || body.peerId);
+  const reason = normalizeModerationReason(body.reason);
+  if (!reporterPeerId || !reportedPeerId || !reason || reporterPeerId === reportedPeerId) return null;
+  const clientId = normalizeStringValue(body.id || body.reportId, 256);
+  const encryptedContent = body.encryptedContent && typeof body.encryptedContent === 'object'
+    ? body.encryptedContent
+    : (body.content && typeof body.content === 'object' ? body.content : null);
+  const contentEncrypted = Boolean(body.contentEncrypted || encryptedContent);
+  return {
+    id: clientId || `report_${crypto.randomUUID()}`,
+    type: normalizeStringValue(body.type, 64) || 'direct_report',
+    reason,
+    reporterPeerId,
+    reportedPeerId,
+    contentEncrypted,
+    encryptedContent: encryptedContent ? normalizeJsonValue(encryptedContent) : null,
+    clientCreatedAt: normalizeTimestamp(body.createdAt || body.clientCreatedAt),
+  };
+}
+
+function normalizeTimestamp(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizeModerationStatus(value) {
+  const status = normalizeStringValue(value, 32)?.toLowerCase();
+  if (!status || status === 'all') return 'all';
+  return ['pending', 'resolved', 'rejected', 'appealed'].includes(status) ? status : null;
+}
+
+function normalizeModerationAction(value) {
+  const action = normalizeStringValue(value, 32)?.toLowerCase();
+  return ['ignore', 'warn', 'suspend', 'ban', 'resolve', 'reject'].includes(action) ? action : null;
 }
 
 function normalizeDeviceId(value) {
@@ -453,6 +545,36 @@ function buildPushEventSignaturePayload(body, normalized) {
   return Buffer.from(
     `${normalized.id}|${normalized.from}|${recipients.join(',')}|${JSON.stringify(payload)}|`
       + `${JSON.stringify(notification || {})}|${delivery.standard}|${delivery.voip}|${normalized.ts}`,
+    'utf8',
+  );
+}
+
+function buildModerationReportSignaturePayload(body, normalized) {
+  const report = normalizeModerationReport(body);
+  if (!report) {
+    throw new Error('invalid moderation report fields');
+  }
+  if (normalized.from !== report.reporterPeerId) {
+    throw new Error('from must match reporterPeerId');
+  }
+  return Buffer.from(
+    `${normalized.id}|${normalized.from}|${report.reportedPeerId}|${report.reason}|`
+      + `${report.type}|${report.contentEncrypted}|${JSON.stringify(report.encryptedContent || {})}|${normalized.ts}`,
+    'utf8',
+  );
+}
+
+function buildModerationAppealSignaturePayload(body, normalized) {
+  const peerId = normalizePeerId(body?.peerId || body?.reportedPeerId);
+  const text = normalizeStringValue(body?.text || body?.message, 4096);
+  if (!peerId || !text) {
+    throw new Error('invalid moderation appeal fields');
+  }
+  if (normalized.from !== peerId) {
+    throw new Error('from must match peerId');
+  }
+  return Buffer.from(
+    `${normalized.id}|${normalized.from}|${peerId}|${text}|${normalized.ts}`,
     'utf8',
   );
 }
@@ -958,6 +1080,117 @@ app.get('/metrics', async (_req, res) => {
 
 app.get('/.well-known/peerlink-source', (_req, res) => {
   res.json(sourceMetadata);
+});
+
+app.post('/moderation/reports', requireSignedRequest(buildModerationReportSignaturePayload), async (req, res) => {
+  const report = normalizeModerationReport(req.body);
+  if (!report) {
+    return res.status(400).json({ error: 'invalid_moderation_report' });
+  }
+  try {
+    const result = await observability.createModerationReport(report, moderationThresholds);
+    return res.status(201).json({
+      ok: true,
+      report: result.report,
+      score: result.score,
+      thresholds: moderationThresholds,
+    });
+  } catch (error) {
+    console.warn('[push][moderation] report persist failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.get('/moderation/status', async (req, res) => {
+  const peerId = normalizePeerId(req.query.peerId);
+  if (!peerId) {
+    return res.status(400).json({ error: 'invalid_peer_id' });
+  }
+  try {
+    const score = await observability.moderationStatus(peerId, moderationThresholds);
+    return res.json({ ok: true, score, thresholds: moderationThresholds });
+  } catch (error) {
+    console.warn('[push][moderation] status failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.post('/moderation/appeals', requireSignedRequest(buildModerationAppealSignaturePayload), async (req, res) => {
+  const peerId = normalizePeerId(req.body?.peerId || req.body?.reportedPeerId);
+  const text = normalizeStringValue(req.body?.text || req.body?.message, 4096);
+  if (!peerId || !text) {
+    return res.status(400).json({ error: 'invalid_appeal' });
+  }
+  try {
+    const appeal = await observability.createModerationAppeal({ peerId, text });
+    return res.status(201).json({ ok: true, appeal });
+  } catch (error) {
+    console.warn('[push][moderation] appeal failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.get('/admin/moderation/summary', requireAdminAuth, async (_req, res) => {
+  try {
+    const summary = await observability.moderationSummary();
+    return res.json({ ok: true, summary, thresholds: moderationThresholds });
+  } catch (error) {
+    console.warn('[push][moderation] summary failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.get('/admin/reports', requireAdminAuth, async (req, res) => {
+  const status = normalizeModerationStatus(req.query.status);
+  const reportedPeerId = normalizePeerId(req.query.reportedPeerId);
+  const limit = Math.min(500, positiveInt(req.query.limit, 100));
+  if (!status) {
+    return res.status(400).json({ error: 'invalid_status' });
+  }
+  try {
+    const reports = await observability.listModerationReports({ status, reportedPeerId, limit });
+    return res.json({ ok: true, reports });
+  } catch (error) {
+    console.warn('[push][moderation] reports failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.get('/admin/moderation/peer-scores', requireAdminAuth, async (req, res) => {
+  const sort = normalizeStringValue(req.query.sort, 64) || 'report_count_desc';
+  const limit = Math.min(1000, positiveInt(req.query.limit, 500));
+  try {
+    const scores = await observability.listModerationPeerScores({ sort, limit, thresholds: moderationThresholds });
+    return res.json({ ok: true, scores, thresholds: moderationThresholds });
+  } catch (error) {
+    console.warn('[push][moderation] peer scores failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
+});
+
+app.post('/admin/reports/:id/action', requireAdminAuth, async (req, res) => {
+  const reportId = normalizeStringValue(req.params.id, 256);
+  const action = normalizeModerationAction(req.body?.action);
+  const note = normalizeStringValue(req.body?.note, 2048) || '';
+  if (!reportId || !action) {
+    return res.status(400).json({ error: 'invalid_action' });
+  }
+  try {
+    const result = await observability.recordModerationAction({
+      reportId,
+      action,
+      note,
+      actor: 'moderator',
+      thresholds: moderationThresholds,
+    });
+    if (!result) {
+      return res.status(404).json({ error: 'report_not_found' });
+    }
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.warn('[push][moderation] action failed:', error instanceof Error ? error.message : String(error));
+    return res.status(503).json({ error: 'moderation_storage_unavailable' });
+  }
 });
 
 app.post('/send', requireAuth, async (req, res) => {

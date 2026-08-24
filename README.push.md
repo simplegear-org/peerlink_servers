@@ -110,12 +110,80 @@ APNs headers used by push service:
 - `apns-topic: <bundle_id>.voip`
 - APNs transport is sent over native HTTP/2 client in `push.js` (not `fetch`), because APNs endpoint is HTTP/2-only.
 
+### `POST /moderation/reports`
+
+Stores a user-generated-content report in the push observability database.
+
+Request body:
+- `id` (required signed request id)
+- `from` (required, must match `reporterPeerId`)
+- `ts` (required unix ms)
+- `sig` (required, base64 Ed25519 signature)
+- `signingPub` (required, base64 Ed25519 public key)
+- `reporterPeerId` (required)
+- `reportedPeerId` (required)
+- `reason` (required): `spam`, `harassment`, `threats`, `illegal_content`, `abusive_behavior`, or `other`
+- `contentEncrypted` (optional boolean)
+- `encryptedContent` (optional object; encrypted selected-message payload)
+- `createdAt` / `clientCreatedAt` (optional client timestamp)
+
+Signature payload:
+`id|from|reportedPeerId|reason|type|contentEncrypted|encryptedContentJson|ts`
+
+The endpoint returns the stored report, current peer score and active
+moderation thresholds. Default scoring policy:
+- `10` reports for one `reportedPeerId` -> `warning`
+- `20` reports for one `reportedPeerId` -> `banned`
+
+### `GET /moderation/status?peerId=<peerId>`
+
+Returns moderation score and policy state for one peer id.
+
+Response includes:
+- `reportCount`
+- `pendingCount`
+- `processedCount`
+- `appealedCount`
+- `policyState`: `clear`, `warning`, or `banned`
+
+### `POST /moderation/appeals`
+
+Stores an appeal request.
+
+Request body:
+- `id` (required signed request id)
+- `from` (required, must match `peerId`)
+- `ts` (required unix ms)
+- `sig` (required, base64 Ed25519 signature)
+- `signingPub` (required, base64 Ed25519 public key)
+- `peerId` (required)
+- `text` or `message` (required)
+
+Signature payload:
+`id|from|peerId|text|ts`
+
+### Admin moderation endpoints
+
+These endpoints require `Authorization: Bearer <MODERATION_ADMIN_TOKEN>`.
+If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
+`PUSH_API_TOKEN`.
+
+- `GET /admin/moderation/summary` — total, processed, remaining/pending reports and warned/banned peer counts
+- `GET /admin/reports?status=pending|resolved|rejected|appealed|all` — report list for moderator UI
+- `GET /admin/moderation/peer-scores?sort=report_count_desc|pending_desc|state_desc|last_report_desc` — sortable peer score list
+- `POST /admin/reports/:id/action` — applies `ignore`, `warn`, `suspend`, `ban`, `resolve`, or `reject`
+
 ## Security
 
 - Set `PUSH_API_TOKEN` and call with `Authorization: Bearer <token>`.
+- Set `MODERATION_ADMIN_TOKEN` for moderator UI/admin endpoints. If omitted,
+  admin moderation endpoints use `PUSH_API_TOKEN`.
 - Write endpoints `/devices/register`, `/devices/unregister`, `/events/push`
   require Ed25519 signature (`id`, `from`, `ts`, `sig`, `signingPub`) and replay
   protection by request id TTL cache.
+- Client moderation write endpoints `/moderation/reports` and
+  `/moderation/appeals` also require Ed25519 signatures and do not require
+  `MODERATION_ADMIN_TOKEN`.
 - If `PUSH_API_TOKEN` is empty, bearer layer is disabled, but signature checks still apply.
 
 Common write errors:
@@ -138,6 +206,9 @@ Common write errors:
 - `PUSH_MAX_DEVICES_PER_USER` (default `20`)
 - `PUSH_SIGNATURE_SKEW_SECONDS` (default `120`)
 - `PUSH_SIGNED_ID_TTL_SECONDS` (default `300`)
+- `MODERATION_ADMIN_TOKEN` (admin bearer token for moderator UI/API; falls back to `PUSH_API_TOKEN`)
+- `MODERATION_WARNING_REPORT_THRESHOLD` (default `10`)
+- `MODERATION_BAN_REPORT_THRESHOLD` (default `20`)
 
 FCM:
 - `FCM_PROJECT_ID`
@@ -162,6 +233,7 @@ npm run start:push
 
 The standalone stack now contains:
 - `push` — Node push runtime on internal port `4500`
+- `moderation-ui` — localhost-only moderator UI on `127.0.0.1:4501`
 - `push-proxy` — public `nginx` on `80/443`
 - `certbot` — one-shot certificate issue helper
 - `certbot-renewer` — background renewal loop (`certbot renew` every `12h`)
@@ -185,6 +257,9 @@ Required environment variables:
 - `PUSH_ORIGIN_CERT_PEM` when `PUSH_TLS_PROVIDER=cloudflare_origin`
 - `PUSH_ORIGIN_KEY_PEM` when `PUSH_TLS_PROVIDER=cloudflare_origin`
 - `PUSH_API_TOKEN`
+- `MODERATION_ADMIN_TOKEN`
+- `MODERATION_WARNING_REPORT_THRESHOLD`
+- `MODERATION_BAN_REPORT_THRESHOLD`
 - `FCM_PROJECT_ID`
 - `FCM_CREDENTIALS_JSON`
 - `APNS_TEAM_ID`
@@ -230,9 +305,11 @@ Certificate paths on host:
 
 The push stack includes production monitoring:
 - `push-observability-db` stores observed self-hosted servers from push payloads
+- `push-observability-db` also stores moderation reports, appeals and peer scores
 - `server-checker` periodically checks observed relay/signal/TURN endpoints
 - `prometheus` scrapes internal `push:4500/metrics`
-- `grafana` is exposed only on the origin host
+- `grafana` is exposed only on the origin host and provisions an additional
+  moderation dashboard
 
 `/metrics` is intentionally not proxied by the public `push-proxy`.
 
@@ -247,6 +324,20 @@ Observed servers are extracted from `payload.servers`, `signalServers`,
 `relayServers`, `turnServers`, and `iceServers` in `/events/push` and `/send`.
 The database keeps per-server usage counters for message/group events, calls,
 checker status, and checker latency.
+
+Moderation tables:
+- `moderation_reports`
+- `moderation_peer_scores`
+- `moderation_appeals`
+
+The moderator UI is exposed only on the origin host:
+
+```text
+http://127.0.0.1:4501
+```
+
+It proxies `/api/*` to the internal `push:4500` service and uses
+`MODERATION_ADMIN_TOKEN` as bearer token.
 
 For a public site allowlist, use only fresh healthy servers:
 
