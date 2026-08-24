@@ -66,17 +66,149 @@ ensure_file_mount_source() {
     echo "Removing stale directory that must be a file: $path"
     rm -rf "$path"
   fi
-  if [[ ! -f "$path" ]]; then
-    echo "Missing required file: $path"
-    echo "Update the checkout before deploy, for example: git pull"
-    exit 1
-  fi
+}
+
+write_moderation_ui_nginx_config() {
+  ensure_file_mount_source "$MODERATION_UI_DIR/nginx.conf"
+  cat > "$MODERATION_UI_DIR/nginx.conf" <<'EOF_MODERATION_NGINX'
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location /api/ {
+    proxy_pass http://push:4500/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+EOF_MODERATION_NGINX
+}
+
+write_moderation_ui_index() {
+  ensure_file_mount_source "$MODERATION_UI_DIR/index.html"
+  cat > "$MODERATION_UI_DIR/index.html" <<'EOF_MODERATION_HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PeerLink X Moderation</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #111827; }
+    header { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid #d9dde5; background: #fff; }
+    h1 { margin: 0; font-size: 20px; }
+    main { padding: 20px 24px 28px; display: grid; gap: 18px; }
+    input, select, button { font: inherit; border: 1px solid #d9dde5; border-radius: 6px; background: #fff; color: #111827; padding: 8px 10px; }
+    button { cursor: pointer; white-space: nowrap; }
+    button.primary { background: #1f7a5b; border-color: #1f7a5b; color: #fff; }
+    button.warn { background: #b7791f; border-color: #b7791f; color: #fff; }
+    button.danger { background: #b42318; border-color: #b42318; color: #fff; }
+    .token { display: flex; gap: 8px; align-items: center; min-width: min(520px, 100%); }
+    .token input { width: 100%; }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 12px; }
+    .metric, section { background: #fff; border: 1px solid #d9dde5; border-radius: 8px; }
+    .metric { padding: 14px; }
+    .metric span { display: block; color: #667085; font-size: 12px; }
+    .metric strong { display: block; margin-top: 6px; font-size: 26px; }
+    section { overflow: hidden; }
+    .section-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid #d9dde5; }
+    .section-head h2 { margin: 0; font-size: 15px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #d9dde5; text-align: left; vertical-align: top; font-size: 13px; overflow-wrap: anywhere; }
+    th { color: #667085; font-weight: 600; background: #fafbfc; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge { display: inline-block; min-width: 64px; padding: 3px 7px; border-radius: 999px; background: #edf2f7; text-align: center; font-size: 12px; }
+    .badge.warning { color: #b7791f; background: #fff7e6; }
+    .badge.banned { color: #b42318; background: #fff1f0; }
+    .empty, .error { padding: 16px; color: #667085; }
+    .error { color: #b42318; }
+    @media (max-width: 920px) { header { align-items: stretch; flex-direction: column; } .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } table { min-width: 860px; } section { overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PeerLink X Moderation</h1>
+    <div class="token">
+      <input id="token" type="password" placeholder="Moderator token">
+      <button id="saveToken" class="primary" type="button">Save</button>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <div class="metrics" id="metrics"></div>
+    <section>
+      <div class="section-head"><h2>Reports</h2><select id="status"><option value="pending">Pending</option><option value="all">All</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option><option value="appealed">Appealed</option></select></div>
+      <div id="reports"></div>
+    </section>
+    <section>
+      <div class="section-head"><h2>Peer Scores</h2><select id="sort"><option value="report_count_desc">Reports</option><option value="pending_desc">Pending</option><option value="state_desc">Policy</option><option value="last_report_desc">Last report</option></select></div>
+      <div id="scores"></div>
+    </section>
+  </main>
+  <script>
+    const apiBase = '/api';
+    const tokenInput = document.querySelector('#token');
+    const metricsEl = document.querySelector('#metrics');
+    const reportsEl = document.querySelector('#reports');
+    const scoresEl = document.querySelector('#scores');
+    const statusEl = document.querySelector('#status');
+    const sortEl = document.querySelector('#sort');
+    tokenInput.value = sessionStorage.getItem('moderationToken') || '';
+    function authHeaders() { const token = tokenInput.value.trim(); return token ? { Authorization: `Bearer ${token}` } : {}; }
+    async function getJson(path) { const res = await fetch(`${apiBase}${path}`, { headers: authHeaders() }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`); return data; }
+    async function postJson(path, body) { const res = await fetch(`${apiBase}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`); return data; }
+    function metric(label, value) { return `<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`; }
+    function badge(value) { const cls = value === 'banned' ? 'banned' : value === 'warning' ? 'warning' : ''; return `<span class="badge ${cls}">${esc(value || 'clear')}</span>`; }
+    function fmt(value) { return value ? new Date(value).toLocaleString() : '-'; }
+    function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
+    async function act(reportId, action) { const note = window.prompt('Moderator note', '') || ''; await postJson(`/admin/reports/${encodeURIComponent(reportId)}/action`, { action, note }); await load(); }
+    window.act = act;
+    function renderReports(reports) {
+      if (!reports.length) { reportsEl.innerHTML = '<div class="empty">No reports</div>'; return; }
+      reportsEl.innerHTML = `<table><thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Content</th><th>Actions</th></tr></thead><tbody>${reports.map((report) => `<tr><td>${fmt(report.receivedAt)}</td><td>${esc(report.reportedPeerId)}</td><td>${esc(report.reporterPeerId)}</td><td>${esc(report.reason)}</td><td>${badge(report.status)}</td><td>${report.contentEncrypted ? 'encrypted message attached' : 'metadata only'}</td><td class="actions"><button onclick="act('${esc(report.id)}', 'ignore')">Ignore</button><button class="warn" onclick="act('${esc(report.id)}', 'warn')">Warn</button><button onclick="act('${esc(report.id)}', 'suspend')">Suspend</button><button class="danger" onclick="act('${esc(report.id)}', 'ban')">Ban</button></td></tr>`).join('')}</tbody></table>`;
+    }
+    function renderScores(scores) {
+      if (!scores.length) { scoresEl.innerHTML = '<div class="empty">No peer reports</div>'; return; }
+      scoresEl.innerHTML = `<table><thead><tr><th>Peer ID</th><th>Reports</th><th>Pending</th><th>Processed</th><th>Appealed</th><th>Policy</th><th>Last report</th></tr></thead><tbody>${scores.map((score) => `<tr><td>${esc(score.peerId)}</td><td>${score.reportCount}</td><td>${score.pendingCount}</td><td>${score.processedCount}</td><td>${score.appealedCount}</td><td>${badge(score.policyState)}</td><td>${fmt(score.lastReportAt)}</td></tr>`).join('')}</tbody></table>`;
+    }
+    async function load() {
+      try {
+        const [summary, reports, scores] = await Promise.all([getJson('/admin/moderation/summary'), getJson(`/admin/reports?status=${encodeURIComponent(statusEl.value)}`), getJson(`/admin/moderation/peer-scores?sort=${encodeURIComponent(sortEl.value)}`)]);
+        const s = summary.summary;
+        metricsEl.innerHTML = [metric('Reports', s.total), metric('Processed', s.processed), metric('Remaining', s.remaining), metric('Pending', s.pending), metric('Warnings', s.warned_peers), metric('Bans', s.banned_peers)].join('');
+        renderReports(reports.reports || []);
+        renderScores(scores.scores || []);
+      } catch (error) {
+        metricsEl.innerHTML = '';
+        reportsEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+        scoresEl.innerHTML = '';
+      }
+    }
+    document.querySelector('#saveToken').addEventListener('click', () => { sessionStorage.setItem('moderationToken', tokenInput.value.trim()); load(); });
+    document.querySelector('#refresh').addEventListener('click', load);
+    statusEl.addEventListener('change', load);
+    sortEl.addEventListener('change', load);
+    load();
+  </script>
+</body>
+</html>
+EOF_MODERATION_HTML
 }
 
 prepare_moderation_ui() {
   ensure_dir "$MODERATION_UI_DIR"
-  ensure_file_mount_source "$MODERATION_UI_DIR/index.html"
-  ensure_file_mount_source "$MODERATION_UI_DIR/nginx.conf"
+  write_moderation_ui_index
+  write_moderation_ui_nginx_config
 }
 
 is_debian_like() {

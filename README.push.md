@@ -292,7 +292,7 @@ cd /opt/peerlink_servers
 
 `deploy-push.sh` flow:
 - prepares local directories for `nginx`, ACME webroot and Let's Encrypt state
-- prepares moderator UI mount sources and removes stale directory placeholders
+- generates moderator UI mount sources and removes stale directory placeholders
   that would break file mounts
 - installs Docker Engine and Docker Compose plugin on clean Debian/Ubuntu hosts
 - validates `.env.push.local` before deployment
