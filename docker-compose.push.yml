@@ -3,7 +3,7 @@ services:
     build:
       context: .
       target: push
-    image: ${PUSH_IMAGE:-peerlink-push:1.2.0-2026082301}
+    image: ${PUSH_IMAGE:-peerlink-push:1.2.1-2026082401}
     container_name: push
     restart: always
     expose:
@@ -28,7 +28,7 @@ services:
     build:
       context: .
       target: server-checker
-    image: ${SERVER_CHECKER_IMAGE:-server-checker:1.2.0-2026082301}
+    image: ${SERVER_CHECKER_IMAGE:-server-checker:1.2.1-2026082401}
     container_name: peerlink-server-checker
     restart: always
     depends_on:

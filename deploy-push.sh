@@ -94,11 +94,6 @@ validate_env() {
   require_var "GRAFANA_ADMIN_PASSWORD"
   require_bool "APNS_USE_SANDBOX"
 
-  if ! node -e 'JSON.parse(process.env.FCM_CREDENTIALS_JSON)' >/dev/null 2>&1; then
-    echo "FCM_CREDENTIALS_JSON must be valid JSON. Wrap it in single quotes in .env.push.local."
-    exit 1
-  fi
-
   if [[ "$PUSH_PUBLIC_HOST" == "localhost" || "$PUSH_PUBLIC_HOST" =~ ^127\. ]]; then
     echo "PUSH_PUBLIC_HOST must be a public DNS name"
     exit 1
@@ -389,12 +384,21 @@ compose() {
   fi
 }
 
+validate_fcm_credentials_json() {
+  if ! compose run --rm --no-deps push \
+    node -e 'JSON.parse(process.env.FCM_CREDENTIALS_JSON); console.log("FCM_CREDENTIALS_JSON ok")'; then
+    echo "FCM_CREDENTIALS_JSON must be valid JSON. Wrap it in single quotes in .env.push.local."
+    exit 1
+  fi
+}
+
 main() {
   load_env
   validate_env
   install_base_packages
   require_command "curl"
   install_docker
+  validate_fcm_credentials_json
   configure_firewall
   check_dns_points_here
   check_public_ports
