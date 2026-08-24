@@ -292,10 +292,16 @@ cd /opt/peerlink_servers
 
 `deploy-push.sh` flow:
 - prepares local directories for `nginx`, ACME webroot and Let's Encrypt state
+- prepares moderator UI mount sources and removes stale directory placeholders
+  that would break file mounts
 - installs Docker Engine and Docker Compose plugin on clean Debian/Ubuntu hosts
 - validates `.env.push.local` before deployment
 - for `PUSH_TLS_PROVIDER=letsencrypt`, starts HTTP challenge config, issues a certificate with `certbot certonly --webroot`, switches `nginx` to HTTPS and starts `certbot-renewer`
 - for `PUSH_TLS_PROVIDER=cloudflare_origin`, writes Cloudflare Origin CA cert/key from `.env.push.local`, starts HTTPS directly and does not run certbot
+- proxies client moderation endpoints `/moderation/reports`,
+  `/moderation/status`, and `/moderation/appeals` through the public push
+  domain; admin moderation endpoints stay available only through the
+  localhost-only moderator UI container
 
 Certificate paths on host:
 - `deploy/push/letsencrypt/live/<PUSH_PUBLIC_HOST>/fullchain.pem`

@@ -8,9 +8,10 @@ ENV_FILE="$ROOT_DIR/.env.push.local"
 ENV_EXAMPLE_FILE="$ROOT_DIR/.env.push.example"
 DEPLOY_DIR="$ROOT_DIR/deploy/push"
 NGINX_DIR="$DEPLOY_DIR/nginx/conf.d"
+MODERATION_UI_DIR="$DEPLOY_DIR/moderation-ui"
 WEBROOT_DIR="$DEPLOY_DIR/certbot/www"
 LETSENCRYPT_DIR="$DEPLOY_DIR/letsencrypt"
-PUSH_RUNTIME_SERVICES=(push server-checker push-observability-db prometheus grafana push-proxy)
+PUSH_RUNTIME_SERVICES=(push server-checker push-observability-db prometheus grafana moderation-ui push-proxy)
 
 SUDO=""
 if [[ "${EUID}" -ne 0 ]]; then
@@ -57,6 +58,25 @@ uses_cloudflare_origin_tls() {
 
 ensure_dir() {
   mkdir -p "$1"
+}
+
+ensure_file_mount_source() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    echo "Removing stale directory that must be a file: $path"
+    rm -rf "$path"
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo "Missing required file: $path"
+    echo "Update the checkout before deploy, for example: git pull"
+    exit 1
+  fi
+}
+
+prepare_moderation_ui() {
+  ensure_dir "$MODERATION_UI_DIR"
+  ensure_file_mount_source "$MODERATION_UI_DIR/index.html"
+  ensure_file_mount_source "$MODERATION_UI_DIR/nginx.conf"
 }
 
 is_debian_like() {
@@ -310,6 +330,39 @@ write_push_locations() {
         proxy_read_timeout 60s;
     }
 
+    location = /moderation/reports {
+        limit_except POST { deny all; }
+        proxy_pass http://push:4500/moderation/reports;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location = /moderation/status {
+        limit_except GET { deny all; }
+        proxy_pass http://push:4500/moderation/status;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location = /moderation/appeals {
+        limit_except POST { deny all; }
+        proxy_pass http://push:4500/moderation/appeals;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
     location / {
         return 404;
     }
@@ -398,31 +451,31 @@ main() {
   install_base_packages
   require_command "curl"
   install_docker
+  ensure_dir "$NGINX_DIR"
+  ensure_dir "$WEBROOT_DIR"
+  ensure_dir "$LETSENCRYPT_DIR"
+  prepare_moderation_ui
   validate_fcm_credentials_json
   configure_firewall
   check_dns_points_here
   check_public_ports
 
-  ensure_dir "$NGINX_DIR"
-  ensure_dir "$WEBROOT_DIR"
-  ensure_dir "$LETSENCRYPT_DIR"
-
   if uses_cloudflare_origin_tls; then
     echo "Installing Cloudflare Origin CA certificate for ${PUSH_PUBLIC_HOST}."
     install_cloudflare_origin_cert
     write_tls_nginx_config
-    compose pull push-proxy push-observability-db prometheus grafana
+    compose pull push-proxy push-observability-db prometheus grafana moderation-ui
     compose stop certbot-renewer >/dev/null 2>&1 || true
     compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}"
   elif has_existing_cert; then
     echo "Existing certificate found for ${PUSH_PUBLIC_HOST}; deploying HTTPS config."
     write_tls_nginx_config
-    compose pull push-proxy certbot-renewer push-observability-db prometheus grafana
+    compose pull push-proxy certbot-renewer push-observability-db prometheus grafana moderation-ui
     compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}" certbot-renewer
   else
     echo "No certificate found for ${PUSH_PUBLIC_HOST}; bootstrapping HTTP challenge config."
     write_http_only_nginx_config
-    compose pull push-proxy certbot certbot-renewer push-observability-db prometheus grafana
+    compose pull push-proxy certbot certbot-renewer push-observability-db prometheus grafana moderation-ui
     compose up -d --build --remove-orphans "${PUSH_RUNTIME_SERVICES[@]}"
 
     compose run --rm certbot certonly \
