@@ -90,7 +90,24 @@ HTTP-сервис, который хранит токены устройств �
 - `GET /moderation/status` — текущий moderation score/status по `peerId`
 - `POST /moderation/appeals` — прием апелляций
 - `GET /admin/reports` и `POST /admin/reports/:id/action` — очередь и действия модератора
+- `GET /admin/moderation/reported-peers` — агрегат пользователей, на которых пожаловались: всего/direct/group
+- `GET /admin/moderation/reporters` — агрегат пользователей, которые жалуются: всего/direct/group
 - `GET /health` — статус конфигурации FCM и защитных механизмов
+
+Security-логика push разнесена по отдельным модулям:
+- `devices/registry.js` — in-memory registry message/VoIP токенов устройств
+- `devices/routes.js` — маршруты `/devices/*`
+- `delivery/dedup-cache.js` — TTL-cache для дедупликации push-событий
+- `delivery/providers.js` — клиенты FCM/APNs и проверка APNs topic
+- `moderation/routes.js` — клиентские и admin маршруты модерации
+- `observability.js` — facade `PushObservability` и bootstrap Postgres schema
+- `observability/server-discovery.js` — извлечение/нормализация server URL из push payload
+- `observability/metrics.js` — Prometheus metrics builder и counters
+- `observability/moderation-helpers.js` — moderation score mappers и policy helpers
+- `observability/server-checker.js` — health checker observed servers
+- `security/signed-requests.js` — Ed25519-проверка write-запросов и replay cache
+- `security/identity-bindings.js` — v2 binding `peerId -> signingPub` и soft enforcement
+- `push.js` только подключает эти проверки к нужным маршрутам
 
 Для write-endpoint’ов `push` используется relay-подобная Ed25519 проверка:
 - обязательные поля: `id`, `from`, `ts`, `sig`, `signingPub`
@@ -99,7 +116,12 @@ HTTP-сервис, который хранит токены устройств �
   - `messageToken` обязателен,
   - `messageProvider` (`fcm`/`apns`, по умолчанию `fcm`),
   - `voipToken` опционален (для iOS/macOS),
-  - подпись: `id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|ts`
+  - legacy-подпись: `id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|ts`
+  - новые клиенты добавляют `identitySchemaVersion=2`, `identityNonce`, `identityProofSig`
+  - v2-подпись register: `id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|identitySchemaVersion|identityNonce|identityProofSig|ts`
+  - identity proof payload: `peerlink_identity_binding_v2|peerId|signingPub|identityNonce`
+- `/devices/register` проверяет `peerId == SHA-256("uid:v2:" + signingPub + ":" + identityNonce)` и сохраняет binding `peerId -> signingPub`
+- режим миграции soft: legacy-клиенты без binding продолжают работать, но если binding уже есть, mismatch ключа отклоняется для `/events/push`, `/moderation/reports` и `/moderation/appeals`
 - для `/events/push` поле `from` должно совпадать с `senderUserId`
 - anti-replay по `id` через TTL-кэш на стороне сервиса
 - `POST /events/push` принимает `senderUserId`, `recipientUserIds`, app-defined `payload`, опциональные `notification` и `delivery`.

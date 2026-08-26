@@ -96,6 +96,9 @@ EOF_MODERATION_NGINX
 
 write_moderation_ui_index() {
   ensure_file_mount_source "$MODERATION_UI_DIR/index.html"
+  if [[ -f "$MODERATION_UI_DIR/index.html" ]]; then
+    return 0
+  fi
   cat > "$MODERATION_UI_DIR/index.html" <<'EOF_MODERATION_HTML'
 <!doctype html>
 <html lang="en">

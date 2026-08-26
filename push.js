@@ -2,10 +2,21 @@
 
 import express from 'express';
 import crypto from 'crypto';
-import http2 from 'http2';
-import { GoogleAuth } from 'google-auth-library';
 import { sourceInfo } from './source-info.js';
 import { PushObservability } from './observability.js';
+import {
+  createDeviceRegistry,
+  shouldInvalidateVoipToken,
+} from './devices/registry.js';
+import { registerDeviceRoutes } from './devices/routes.js';
+import { createDedupCache } from './delivery/dedup-cache.js';
+import { createPushProviders } from './delivery/providers.js';
+import { registerModerationRoutes } from './moderation/routes.js';
+import { createIdentityBindingService } from './security/identity-bindings.js';
+import {
+  createSignedRequestVerifier,
+  verifyEd25519Signature,
+} from './security/signed-requests.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.PUSH_BODY_LIMIT || '2mb' }));
@@ -44,25 +55,47 @@ const SIGNED_ID_TTL_SECONDS = Number.parseInt(process.env.PUSH_SIGNED_ID_TTL_SEC
 
 const FCM_PROJECT_ID = (process.env.FCM_PROJECT_ID || '').trim();
 const FCM_CREDENTIALS_JSON = (process.env.FCM_CREDENTIALS_JSON || '').trim();
-const FCM_SCOPES = ['https://www.googleapis.com/auth/firebase.messaging'];
 const APNS_TEAM_ID = (process.env.APNS_TEAM_ID || '').trim();
 const APNS_KEY_ID = (process.env.APNS_KEY_ID || '').trim();
 const APNS_PRIVATE_KEY = (process.env.APNS_PRIVATE_KEY || '').trim();
 const APNS_VOIP_TOPIC = (process.env.APNS_VOIP_TOPIC || '').trim();
 const APNS_MESSAGES_TOPIC = (process.env.APNS_MESSAGES_TOPIC || '').trim();
 const APNS_USE_SANDBOX = (process.env.APNS_USE_SANDBOX || 'true').trim().toLowerCase() !== 'false';
-const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
-let googleAuthClient = null;
-let apnsJwtCache = null;
-const dedupCache = new Map(); // dedupKey -> expiresAtMs
-const devicesByUser = new Map(); // userId -> Map<deviceId, device>
-const tokenToOwner = new Map(); // fcmToken -> { userId, deviceId }
-const voipDevicesByUser = new Map(); // userId -> Map<deviceId, voipDevice>
-const voipTokenToOwner = new Map(); // voipToken -> { userId, deviceId }
-const signedRequestIds = new Map(); // id -> expiresAtMs
+const deviceRegistry = createDeviceRegistry({ maxDevicesPerUser: MAX_DEVICES_PER_USER });
+const dedup = createDedupCache({
+  ttlSeconds: DEDUP_TTL_SECONDS,
+  normalizeTokenInput,
+});
+const pushProviders = createPushProviders({
+  fcmProjectId: FCM_PROJECT_ID,
+  fcmCredentialsJson: FCM_CREDENTIALS_JSON,
+  apnsTeamId: APNS_TEAM_ID,
+  apnsKeyId: APNS_KEY_ID,
+  apnsPrivateKey: APNS_PRIVATE_KEY,
+  apnsVoipTopic: APNS_VOIP_TOPIC,
+  apnsMessagesTopic: APNS_MESSAGES_TOPIC,
+  apnsUseSandbox: APNS_USE_SANDBOX,
+  normalizeStringValue,
+});
 const observability = new PushObservability();
 await observability.init();
+const signedRequests = createSignedRequestVerifier({
+  skewSeconds: SIGNATURE_SKEW_SECONDS,
+  signedIdTtlSeconds: SIGNED_ID_TTL_SECONDS,
+  normalizeStringValue,
+});
+const { requireSignedRequest } = signedRequests;
+const identityBindings = createIdentityBindingService({
+  observability,
+  normalizeStringValue,
+  verifyEd25519Signature,
+});
+const {
+  readIdentityBindingFields,
+  verifyAndBindPeerIdentity,
+  enforcePeerIdentityBinding,
+} = identityBindings;
 
 const moderationThresholds = {
   warningThreshold: MODERATION_WARNING_REPORT_THRESHOLD,
@@ -74,52 +107,6 @@ function positiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function cleanupDedupCache() {
-  const now = Date.now();
-  for (const [key, expiresAtMs] of dedupCache.entries()) {
-    if (expiresAtMs <= now) {
-      dedupCache.delete(key);
-    }
-  }
-}
-
-function getDedupKey(body) {
-  if (!body || typeof body !== 'object') {
-    return null;
-  }
-  const token = normalizeTokenInput(body.token);
-  const data = body.data && typeof body.data === 'object' ? body.data : null;
-  if (!token || !data) {
-    return null;
-  }
-  const eventType = typeof data.type === 'string' ? data.type : 'unknown';
-  const scopeId =
-    (typeof data.groupId === 'string' && data.groupId) ||
-    (typeof data.directPeerId === 'string' && data.directPeerId) ||
-    '';
-  const seq = typeof data.lastSeq === 'string' ? data.lastSeq : '';
-  if (!scopeId || !seq) {
-    return null;
-  }
-  return `${token}|${eventType}|${scopeId}|${seq}`;
-}
-
-function tryAcquireDedup(body) {
-  const ttlSeconds = Number.isFinite(DEDUP_TTL_SECONDS) && DEDUP_TTL_SECONDS > 0
-    ? DEDUP_TTL_SECONDS
-    : 30;
-  const key = getDedupKey(body);
-  if (!key) {
-    return { deduped: false, key: null };
-  }
-  cleanupDedupCache();
-  if (dedupCache.has(key)) {
-    return { deduped: true, key };
-  }
-  dedupCache.set(key, Date.now() + ttlSeconds * 1000);
-  return { deduped: false, key };
-}
-
 function parseBearerToken(authHeader) {
   if (typeof authHeader !== 'string') return null;
   const [scheme, token] = authHeader.split(' ');
@@ -127,27 +114,6 @@ function parseBearerToken(authHeader) {
     return null;
   }
   return token.trim();
-}
-
-function cleanupSignedRequestIds() {
-  const now = Date.now();
-  for (const [id, expiresAtMs] of signedRequestIds.entries()) {
-    if (expiresAtMs <= now) {
-      signedRequestIds.delete(id);
-    }
-  }
-}
-
-function tryAcquireSignedRequestId(id) {
-  cleanupSignedRequestIds();
-  if (signedRequestIds.has(id)) {
-    return false;
-  }
-  const ttlSeconds = Number.isFinite(SIGNED_ID_TTL_SECONDS) && SIGNED_ID_TTL_SECONDS > 0
-    ? SIGNED_ID_TTL_SECONDS
-    : 300;
-  signedRequestIds.set(id, Date.now() + ttlSeconds * 1000);
-  return true;
 }
 
 function requireAuth(req, res, next) {
@@ -278,97 +244,6 @@ function normalizePlatform(value) {
   return platform.toLowerCase();
 }
 
-function parseBase64(input) {
-  if (typeof input !== 'string' || input.length === 0) {
-    return null;
-  }
-  try {
-    return Buffer.from(input, 'base64');
-  } catch (_) {
-    return null;
-  }
-}
-
-function verifyEd25519Signature({ payloadBytes, signatureB64, signingPubB64 }) {
-  const signature = parseBase64(signatureB64);
-  const signingPubRaw = parseBase64(signingPubB64);
-  if (!signature || !signingPubRaw || signingPubRaw.length !== 32) {
-    return false;
-  }
-  try {
-    const publicKeyDer = Buffer.concat([ED25519_SPKI_PREFIX, signingPubRaw]);
-    const publicKey = crypto.createPublicKey({
-      key: publicKeyDer,
-      format: 'der',
-      type: 'spki',
-    });
-    return crypto.verify(null, payloadBytes, publicKey, signature);
-  } catch (_) {
-    return false;
-  }
-}
-
-function requireSignedRequest(buildPayload) {
-  return (req, res, next) => {
-    const body = req.body;
-    if (!body || typeof body !== 'object') {
-      return res.status(400).json({ error: 'invalid body' });
-    }
-    const required = ['id', 'from', 'ts', 'sig', 'signingPub'];
-    for (const key of required) {
-      if (!(key in body)) {
-        return res.status(400).json({ error: `missing ${key}` });
-      }
-    }
-    const id = normalizeStringValue(body.id, 256);
-    const from = normalizeStringValue(body.from, 128);
-    const ts = Number.parseInt(String(body.ts), 10);
-    if (!id || !from || !Number.isFinite(ts)) {
-      return res.status(400).json({ error: 'invalid id/from/ts' });
-    }
-    const nowSec = Math.floor(Date.now() / 1000);
-    const tsSec = Math.floor(ts / 1000);
-    if (Math.abs(nowSec - tsSec) > SIGNATURE_SKEW_SECONDS) {
-      console.warn('[push][sig] signature_timestamp_skew', {
-        path: req.originalUrl,
-        id,
-        from,
-        nowSec,
-        tsSec,
-        skewSec: nowSec - tsSec,
-      });
-      return res.status(401).json({ error: 'signature_timestamp_skew' });
-    }
-    if (!tryAcquireSignedRequestId(id)) {
-      return res.status(409).json({ error: 'duplicate request id' });
-    }
-    let payloadBytes;
-    try {
-      payloadBytes = buildPayload(body, { id, from, ts });
-    } catch (error) {
-      return res.status(400).json({
-        error: 'invalid signature payload',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-    const verified = verifyEd25519Signature({
-      payloadBytes,
-      signatureB64: body.sig,
-      signingPubB64: body.signingPub,
-    });
-    if (!verified) {
-      console.warn('[push][sig] invalid signature', {
-        path: req.originalUrl,
-        id,
-        from,
-      });
-      return res.status(401).json({ error: 'invalid signature' });
-    }
-    req.signature = { id, from, ts };
-    return next();
-  };
-}
-
 function buildRegisterSignaturePayload(body, normalized) {
   const userId = normalizeUserId(body.userId);
   const deviceId = normalizeDeviceId(body.deviceId);
@@ -378,14 +253,21 @@ function buildRegisterSignaturePayload(body, normalized) {
   const voipToken = normalizeVoipTokenInput(body.voipToken) || '';
   const platform = normalizePlatform(body.platform);
   const appVersion = normalizeStringValue(body.appVersion, 64) || '';
+  const identityFields = readIdentityBindingFields(body);
   if (!userId || !deviceId || !messageToken || !platform) {
     throw new Error('invalid register fields');
+  }
+  if (identityFields && !identityFields.ok) {
+    throw new Error(identityFields.error);
   }
   if (normalized.from !== userId) {
     throw new Error('from must match userId');
   }
+  const identitySuffix = identityFields
+    ? `|${identityFields.schemaVersion}|${identityFields.identityNonce}|${identityFields.identityProofSig}`
+    : '';
   return Buffer.from(
-    `${normalized.id}|${normalized.from}|${deviceId}|${messageToken}|${messageProvider}|${voipToken}|${platform}|${appVersion}|${normalized.ts}`,
+    `${normalized.id}|${normalized.from}|${deviceId}|${messageToken}|${messageProvider}|${voipToken}|${platform}|${appVersion}${identitySuffix}|${normalized.ts}`,
     'utf8',
   );
 }
@@ -579,465 +461,18 @@ function buildModerationAppealSignaturePayload(body, normalized) {
   );
 }
 
-function devicePublicView(device) {
-  return {
-    userId: device.userId,
-    deviceId: device.deviceId,
-    platform: device.platform,
-    appVersion: device.appVersion,
-    enabled: device.enabled,
-    lastSeenAt: device.lastSeenAt,
-    updatedAt: device.updatedAt,
-  };
-}
-
-function ensureUserDevices(userId) {
-  let devices = devicesByUser.get(userId);
-  if (!devices) {
-    devices = new Map();
-    devicesByUser.set(userId, devices);
-  }
-  return devices;
-}
-
-function registerDevice({ userId, deviceId, token, platform, appVersion, messageProvider = 'fcm' }) {
-  return registerDeviceGeneric({
-    userId,
-    deviceId,
-    token,
-    platform,
-    appVersion,
-    messageProvider,
-    ensureDevices: ensureUserDevices,
-    devicesByUserMap: devicesByUser,
-    tokenToOwnerMap: tokenToOwner,
-  });
-}
-
-function ensureVoipUserDevices(userId) {
-  let devices = voipDevicesByUser.get(userId);
-  if (!devices) {
-    devices = new Map();
-    voipDevicesByUser.set(userId, devices);
-  }
-  return devices;
-}
-
-function registerVoipDevice({ userId, deviceId, token, platform, appVersion }) {
-  return registerDeviceGeneric({
-    userId,
-    deviceId,
-    token,
-    platform,
-    appVersion,
-    ensureDevices: ensureVoipUserDevices,
-    devicesByUserMap: voipDevicesByUser,
-    tokenToOwnerMap: voipTokenToOwner,
-  });
-}
-
-function registerDeviceGeneric({
-  userId,
-  deviceId,
-  token,
-  platform,
-  appVersion,
-  messageProvider,
-  ensureDevices,
-  devicesByUserMap,
-  tokenToOwnerMap,
-}) {
-  const devices = ensureDevices(userId);
-  const now = Date.now();
-  const previousOwner = tokenToOwnerMap.get(token);
-  if (previousOwner && (previousOwner.userId !== userId || previousOwner.deviceId !== deviceId)) {
-    const previousDevices = devicesByUserMap.get(previousOwner.userId);
-    const previousDevice = previousDevices?.get(previousOwner.deviceId);
-    if (previousDevice && previousDevice.token === token) {
-      previousDevice.enabled = false;
-      previousDevice.updatedAt = now;
-      previousDevices.set(previousOwner.deviceId, previousDevice);
-    }
-  }
-  if (!devices.has(deviceId) && devices.size >= Math.max(1, MAX_DEVICES_PER_USER)) {
-    let oldest = null;
-    for (const candidate of devices.values()) {
-      if (!oldest || candidate.lastSeenAt < oldest.lastSeenAt) {
-        oldest = candidate;
-      }
-    }
-    if (oldest) {
-      devices.delete(oldest.deviceId);
-      if (tokenToOwnerMap.get(oldest.token)?.deviceId === oldest.deviceId) {
-        tokenToOwnerMap.delete(oldest.token);
-      }
-    }
-  }
-  const existing = devices.get(deviceId);
-  const device = {
-    userId,
-    deviceId,
-    token,
-    platform,
-    appVersion,
-    messageProvider: messageProvider || 'fcm',
-    enabled: true,
-    lastSeenAt: now,
-    updatedAt: now,
-    createdAt: existing?.createdAt ?? now,
-  };
-  devices.set(deviceId, device);
-  tokenToOwnerMap.set(token, { userId, deviceId });
-  return device;
-}
-
-function unregisterDevice({ userId, deviceId, token }) {
-  return unregisterDeviceGeneric({
-    userId,
-    deviceId,
-    token,
-    devicesByUserMap: devicesByUser,
-    tokenToOwnerMap: tokenToOwner,
-  });
-}
-
-function unregisterVoipDevice({ userId, deviceId, token }) {
-  return unregisterDeviceGeneric({
-    userId,
-    deviceId,
-    token,
-    devicesByUserMap: voipDevicesByUser,
-    tokenToOwnerMap: voipTokenToOwner,
-  });
-}
-
-function shouldInvalidateVoipToken(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('"reason":"BadDeviceToken"')
-    || message.includes('"reason":"Unregistered"');
-}
-
-function unregisterDeviceGeneric({ userId, deviceId, token, devicesByUserMap, tokenToOwnerMap }) {
-  const devices = devicesByUserMap.get(userId);
-  if (!devices) return false;
-  const device = devices.get(deviceId);
-  if (!device) return false;
-  if (device.token !== token) return false;
-  device.enabled = false;
-  device.updatedAt = Date.now();
-  devices.set(deviceId, device);
-  if (tokenToOwnerMap.get(token)?.userId === userId && tokenToOwnerMap.get(token)?.deviceId === deviceId) {
-    tokenToOwnerMap.delete(token);
-  }
-  return true;
-}
-
-function getActiveTokensForUsers(userIds) {
-  return getActiveTokensForUsersFromMap(userIds, devicesByUser);
-}
-
-function getActiveVoipTokensForUsers(userIds) {
-  return getActiveTokensForUsersFromMap(userIds, voipDevicesByUser);
-}
-
-function getActiveTokensForUsersFromMap(userIds, devicesByUserMap) {
-  const tokens = [];
-  for (const userId of userIds) {
-    const devices = devicesByUserMap.get(userId);
-    if (!devices) continue;
-    for (const device of devices.values()) {
-      if (device.enabled && device.token) {
-        tokens.push({
-          userId,
-          deviceId: device.deviceId,
-          token: device.token,
-          platform: device.platform || '',
-          messageProvider: device.messageProvider || 'fcm',
-        });
-      }
-    }
-  }
-  return tokens;
-}
-
-function getGoogleAuthClient() {
-  if (googleAuthClient) return googleAuthClient;
-  if (!FCM_PROJECT_ID) {
-    throw new Error('FCM_PROJECT_ID is not configured');
-  }
-  const credentials = parseFcmCredentialsJson();
-  googleAuthClient = new GoogleAuth({
-    credentials,
-    scopes: FCM_SCOPES,
-  });
-  return googleAuthClient;
-}
-
-function parseFcmCredentialsJson() {
-  if (!FCM_CREDENTIALS_JSON) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(FCM_CREDENTIALS_JSON);
-  } catch (error) {
-    throw new Error(
-      'FCM_CREDENTIALS_JSON is invalid JSON; wrap the service account JSON '
-        + 'in single quotes in .env.push.local. '
-        + (error instanceof Error ? error.message : String(error)),
-    );
-  }
-}
-
-async function sendFcm({ token, data, notification, android }) {
-  const auth = getGoogleAuthClient();
-  const accessToken = await auth.getAccessToken();
-  if (!accessToken) {
-    throw new Error('failed to obtain FCM access token');
-  }
-
-  const message = {
-    token,
-    data: normalizeFcmData(data),
-  };
-  if (
-    notification &&
-    typeof notification === 'object' &&
-    (typeof notification.title === 'string' || typeof notification.body === 'string')
-  ) {
-    message.notification = {};
-    if (typeof notification.title === 'string') message.notification.title = notification.title;
-    if (typeof notification.body === 'string') message.notification.body = notification.body;
-    message.apns = {
-      payload: {
-        aps: {
-          badge: 1,
-          sound: 'default',
-          alert: {
-            ...(typeof notification.title === 'string' ? { title: notification.title } : {}),
-            ...(typeof notification.body === 'string' ? { body: notification.body } : {}),
-          },
-        },
-      },
-    };
-  }
-  if (android && typeof android === 'object') {
-    message.android = android;
-  }
-
-  const response = await fetch(
-    `https://fcm.googleapis.com/v1/projects/${FCM_PROJECT_ID}/messages:send`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ message }),
-    },
-  );
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`fcm status=${response.status} body=${text.slice(0, 512)}`);
-  }
-  return { ok: true, provider: 'fcm', raw: text };
-}
-
-function normalizeFcmData(data) {
-  if (!data || typeof data !== 'object') {
-    return {};
-  }
-  const out = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (typeof value === 'string') {
-      out[key] = value;
-      continue;
-    }
-    out[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  }
-  return out;
-}
-
-function hasApnsCredentials() {
-  return Boolean(APNS_TEAM_ID && APNS_KEY_ID && APNS_PRIVATE_KEY);
-}
-
-function isApnsVoipConfigured() {
-  return hasApnsCredentials() && Boolean(normalizeApnsVoipTopic(APNS_VOIP_TOPIC));
-}
-
-function normalizeApnsVoipTopic(value) {
-  const topic = normalizeStringValue(value, 256);
-  if (!topic) return null;
-  if (!topic.endsWith('.voip')) {
-    return null;
-  }
-  return topic;
-}
-
-function normalizeApnsAlertTopic(value) {
-  const topic = normalizeStringValue(value, 256);
-  if (!topic) return null;
-  if (topic.endsWith('.voip')) {
-    return null;
-  }
-  return topic;
-}
-
-function isApnsAlertConfigured() {
-  return hasApnsCredentials() && Boolean(normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC));
-}
-
-function getApnsJwt() {
-  if (!hasApnsCredentials()) {
-    throw new Error('apns credentials are not configured');
-  }
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (apnsJwtCache && apnsJwtCache.expiresAtSec > nowSec + 30) {
-    return apnsJwtCache.token;
-  }
-  const header = Buffer.from(
-    JSON.stringify({ alg: 'ES256', kid: APNS_KEY_ID }),
-    'utf8',
-  ).toString('base64url');
-  const payload = Buffer.from(
-    JSON.stringify({ iss: APNS_TEAM_ID, iat: nowSec }),
-    'utf8',
-  ).toString('base64url');
-  const signingInput = `${header}.${payload}`;
-  const privateKeyPem = APNS_PRIVATE_KEY.includes('\\n')
-    ? APNS_PRIVATE_KEY.replace(/\\n/g, '\n')
-    : APNS_PRIVATE_KEY;
-  const signer = crypto.createSign('sha256');
-  signer.update(signingInput);
-  signer.end();
-  const signature = signer.sign(privateKeyPem).toString('base64url');
-  const token = `${signingInput}.${signature}`;
-  apnsJwtCache = {
-    token,
-    expiresAtSec: nowSec + 50 * 60,
-  };
-  return token;
-}
-
-async function sendApnsVoip({ token, payload, topic }) {
-  const jwt = getApnsJwt();
-  const host = APNS_USE_SANDBOX ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
-  const resolvedTopic = normalizeApnsVoipTopic(topic) || normalizeApnsVoipTopic(APNS_VOIP_TOPIC);
-  if (!resolvedTopic) {
-    throw new Error('apns voip topic is not configured or invalid (must end with .voip)');
-  }
-  const body = JSON.stringify(payload);
-  const response = await new Promise((resolve, reject) => {
-    const client = http2.connect(host);
-    client.on('error', reject);
-
-    const req = client.request({
-      ':method': 'POST',
-      ':path': `/3/device/${token}`,
-      authorization: `bearer ${jwt}`,
-      'apns-push-type': 'voip',
-      'apns-priority': '10',
-      'apns-topic': resolvedTopic,
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-    });
-
-    let raw = '';
-    let status = 0;
-
-    req.setEncoding('utf8');
-    req.on('response', (headers) => {
-      status = Number(headers[':status'] || 0);
-    });
-    req.on('data', (chunk) => {
-      raw += chunk;
-    });
-    req.on('end', () => {
-      client.close();
-      resolve({ status, raw });
-    });
-    req.on('error', (error) => {
-      client.close();
-      reject(error);
-    });
-
-    req.write(body);
-    req.end();
-  });
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`apns status=${response.status} body=${(response.raw || '').slice(0, 512)}`);
-  }
-  return { ok: true, provider: 'apns', raw: response.raw || '' };
-}
-
-async function sendApnsAlert({ token, payload, topic }) {
-  const jwt = getApnsJwt();
-  const host = APNS_USE_SANDBOX ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
-  const resolvedTopic = normalizeApnsAlertTopic(topic) || normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
-  if (!resolvedTopic) {
-    throw new Error('apns alert topic is not configured or invalid');
-  }
-  const body = JSON.stringify(payload);
-  const response = await new Promise((resolve, reject) => {
-    const client = http2.connect(host);
-    client.on('error', reject);
-
-    const req = client.request({
-      ':method': 'POST',
-      ':path': `/3/device/${token}`,
-      authorization: `bearer ${jwt}`,
-      'apns-push-type': 'alert',
-      'apns-priority': '10',
-      'apns-topic': resolvedTopic,
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-    });
-
-    let raw = '';
-    let status = 0;
-
-    req.setEncoding('utf8');
-    req.on('response', (headers) => {
-      status = Number(headers[':status'] || 0);
-    });
-    req.on('data', (chunk) => {
-      raw += chunk;
-    });
-    req.on('end', () => {
-      client.close();
-      resolve({ status, raw });
-    });
-    req.on('error', (error) => {
-      client.close();
-      reject(error);
-    });
-
-    req.write(body);
-    req.end();
-  });
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`apns status=${response.status} body=${(response.raw || '').slice(0, 512)}`);
-  }
-  return { ok: true, provider: 'apns', raw: response.raw || '' };
-}
-
-app.get('/health', (_req, res) => {
-  cleanupDedupCache();
-  cleanupSignedRequestIds();
+app.get('/health', async (_req, res) => {
+  dedup.cleanup();
+  signedRequests.cleanupSignedRequestIds();
   res.json({
     ok: true,
     source: sourceMetadata,
     providers: {
       fcmConfigured: Boolean(FCM_PROJECT_ID),
-      apnsVoipConfigured: isApnsVoipConfigured(),
-      apnsVoipTopicConfigured: Boolean(normalizeApnsVoipTopic(APNS_VOIP_TOPIC)),
-      apnsAlertConfigured: isApnsAlertConfigured(),
-      apnsAlertTopicConfigured: Boolean(normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC)),
+      apnsVoipConfigured: pushProviders.isApnsVoipConfigured(),
+      apnsVoipTopicConfigured: Boolean(pushProviders.normalizeApnsVoipTopic(APNS_VOIP_TOPIC)),
+      apnsAlertConfigured: pushProviders.isApnsAlertConfigured(),
+      apnsAlertTopicConfigured: Boolean(pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC)),
       apnsUseSandbox: APNS_USE_SANDBOX,
     },
     security: {
@@ -1045,35 +480,30 @@ app.get('/health', (_req, res) => {
     },
     dedup: {
       ttlSeconds: DEDUP_TTL_SECONDS,
-      cacheSize: dedupCache.size,
+      cacheSize: dedup.cache.size,
     },
     signature: {
       requiredForWrite: true,
       skewSeconds: SIGNATURE_SKEW_SECONDS,
       signedIdTtlSeconds: SIGNED_ID_TTL_SECONDS,
-      replayCacheSize: signedRequestIds.size,
+      replayCacheSize: signedRequests.replayCacheSize(),
     },
-    devices: {
-      users: devicesByUser.size,
-      tokens: tokenToOwner.size,
-      voipUsers: voipDevicesByUser.size,
-      voipTokens: voipTokenToOwner.size,
-      maxDevicesPerUser: MAX_DEVICES_PER_USER,
+    identityBindings: {
+      verifiedPeers: await observability.peerIdentityBindingCount(),
+      mode: 'soft',
     },
+    devices: deviceRegistry.stats(),
     ts: Date.now(),
   });
 });
 
 app.get('/metrics', async (_req, res) => {
-  cleanupDedupCache();
-  cleanupSignedRequestIds();
+  dedup.cleanup();
+  signedRequests.cleanupSignedRequestIds();
   const body = await observability.metrics({
-    devicesByUser,
-    tokenToOwner,
-    voipDevicesByUser,
-    voipTokenToOwner,
-    dedupCache,
-    signedRequestIds,
+    ...deviceRegistry.maps,
+    dedupCache: dedup.cache,
+    signedRequestReplayCacheSize: signedRequests.replayCacheSize(),
   });
   res.type('text/plain; version=0.0.4; charset=utf-8').send(body);
 });
@@ -1082,115 +512,21 @@ app.get('/.well-known/peerlink-source', (_req, res) => {
   res.json(sourceMetadata);
 });
 
-app.post('/moderation/reports', requireSignedRequest(buildModerationReportSignaturePayload), async (req, res) => {
-  const report = normalizeModerationReport(req.body);
-  if (!report) {
-    return res.status(400).json({ error: 'invalid_moderation_report' });
-  }
-  try {
-    const result = await observability.createModerationReport(report, moderationThresholds);
-    return res.status(201).json({
-      ok: true,
-      report: result.report,
-      score: result.score,
-      thresholds: moderationThresholds,
-    });
-  } catch (error) {
-    console.warn('[push][moderation] report persist failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.get('/moderation/status', async (req, res) => {
-  const peerId = normalizePeerId(req.query.peerId);
-  if (!peerId) {
-    return res.status(400).json({ error: 'invalid_peer_id' });
-  }
-  try {
-    const score = await observability.moderationStatus(peerId, moderationThresholds);
-    return res.json({ ok: true, score, thresholds: moderationThresholds });
-  } catch (error) {
-    console.warn('[push][moderation] status failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.post('/moderation/appeals', requireSignedRequest(buildModerationAppealSignaturePayload), async (req, res) => {
-  const peerId = normalizePeerId(req.body?.peerId || req.body?.reportedPeerId);
-  const text = normalizeStringValue(req.body?.text || req.body?.message, 4096);
-  if (!peerId || !text) {
-    return res.status(400).json({ error: 'invalid_appeal' });
-  }
-  try {
-    const appeal = await observability.createModerationAppeal({ peerId, text });
-    return res.status(201).json({ ok: true, appeal });
-  } catch (error) {
-    console.warn('[push][moderation] appeal failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.get('/admin/moderation/summary', requireAdminAuth, async (_req, res) => {
-  try {
-    const summary = await observability.moderationSummary();
-    return res.json({ ok: true, summary, thresholds: moderationThresholds });
-  } catch (error) {
-    console.warn('[push][moderation] summary failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.get('/admin/reports', requireAdminAuth, async (req, res) => {
-  const status = normalizeModerationStatus(req.query.status);
-  const reportedPeerId = normalizePeerId(req.query.reportedPeerId);
-  const limit = Math.min(500, positiveInt(req.query.limit, 100));
-  if (!status) {
-    return res.status(400).json({ error: 'invalid_status' });
-  }
-  try {
-    const reports = await observability.listModerationReports({ status, reportedPeerId, limit });
-    return res.json({ ok: true, reports });
-  } catch (error) {
-    console.warn('[push][moderation] reports failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.get('/admin/moderation/peer-scores', requireAdminAuth, async (req, res) => {
-  const sort = normalizeStringValue(req.query.sort, 64) || 'report_count_desc';
-  const limit = Math.min(1000, positiveInt(req.query.limit, 500));
-  try {
-    const scores = await observability.listModerationPeerScores({ sort, limit, thresholds: moderationThresholds });
-    return res.json({ ok: true, scores, thresholds: moderationThresholds });
-  } catch (error) {
-    console.warn('[push][moderation] peer scores failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
-});
-
-app.post('/admin/reports/:id/action', requireAdminAuth, async (req, res) => {
-  const reportId = normalizeStringValue(req.params.id, 256);
-  const action = normalizeModerationAction(req.body?.action);
-  const note = normalizeStringValue(req.body?.note, 2048) || '';
-  if (!reportId || !action) {
-    return res.status(400).json({ error: 'invalid_action' });
-  }
-  try {
-    const result = await observability.recordModerationAction({
-      reportId,
-      action,
-      note,
-      actor: 'moderator',
-      thresholds: moderationThresholds,
-    });
-    if (!result) {
-      return res.status(404).json({ error: 'report_not_found' });
-    }
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    console.warn('[push][moderation] action failed:', error instanceof Error ? error.message : String(error));
-    return res.status(503).json({ error: 'moderation_storage_unavailable' });
-  }
+registerModerationRoutes({
+  app,
+  requireSignedRequest,
+  requireAdminAuth,
+  buildModerationReportSignaturePayload,
+  buildModerationAppealSignaturePayload,
+  enforcePeerIdentityBinding,
+  observability,
+  moderationThresholds,
+  normalizeModerationReport,
+  normalizeModerationStatus,
+  normalizeModerationAction,
+  normalizePeerId,
+  normalizeStringValue,
+  positiveInt,
 });
 
 app.post('/send', requireAuth, async (req, res) => {
@@ -1202,14 +538,14 @@ app.post('/send', requireAuth, async (req, res) => {
   if (!token) {
     return res.status(400).json({ error: 'invalid token' });
   }
-  const dedup = tryAcquireDedup(body);
-  if (dedup.deduped) {
+  const dedupResult = dedup.tryAcquire(body);
+  if (dedupResult.deduped) {
     observability.recordPushEvent({ payload: body.data, delivery: { standard: true, voip: false }, deduped: true });
     return res.json({ ok: true, provider: 'fcm', deduped: true });
   }
   observability.recordPushEvent({ payload: body.data, delivery: { standard: true, voip: false } });
   try {
-    const result = await sendFcm({
+    const result = await pushProviders.sendFcm({
       token,
       data: body.data,
       notification: body.notification,
@@ -1240,74 +576,21 @@ app.post('/send', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/devices/register', requireAuth, requireSignedRequest(buildRegisterSignaturePayload), (req, res) => {
-  const userId = normalizeUserId(req.body?.userId);
-  const deviceId = normalizeDeviceId(req.body?.deviceId);
-  const messageToken = normalizeStringValue(req.body?.messageToken, 4096)
-    || normalizeTokenInput(req.body?.token);
-  const messageProvider = normalizeStringValue(req.body?.messageProvider, 16)?.toLowerCase() || 'fcm';
-  const voipToken = normalizeVoipTokenInput(req.body?.voipToken);
-  const platform = normalizePlatform(req.body?.platform);
-  const appVersion = normalizeStringValue(req.body?.appVersion, 64) || '';
-  if (!userId || !deviceId || !messageToken || !platform) {
-    return res.status(400).json({ error: 'invalid_payload' });
-  }
-  console.log('[push][register]', {
-    userId,
-    deviceId,
-    platform,
-    messageProvider,
-    appVersion,
-    tokenTail: messageToken.slice(-8),
-    voipTokenTail: voipToken ? voipToken.slice(-8) : null,
-    hasVoipToken: Boolean(voipToken),
-  });
-  const device = registerDevice({
-    userId,
-    deviceId,
-    token: messageToken,
-    platform,
-    appVersion,
-    messageProvider,
-  });
-  if (voipToken) {
-    registerVoipDevice({
-      userId,
-      deviceId,
-      token: voipToken,
-      platform,
-      appVersion,
-    });
-  }
-  observability.recordDeviceRegister({ platform, messageProvider });
-  return res.json({ ok: true, device: devicePublicView(device) });
-});
-
-app.post('/devices/unregister', requireAuth, requireSignedRequest(buildUnregisterSignaturePayload), (req, res) => {
-  const userId = normalizeUserId(req.body?.userId);
-  const deviceId = normalizeDeviceId(req.body?.deviceId);
-  const token = normalizeTokenInput(req.body?.token);
-  if (!userId || !deviceId || !token) {
-    return res.status(400).json({ error: 'invalid_payload' });
-  }
-  const existing = devicesByUser.get(userId)?.get(deviceId);
-  const ok = unregisterDevice({ userId, deviceId, token });
-  if (ok) {
-    observability.recordDeviceUnregister({
-      platform: existing?.platform || 'unknown',
-      messageProvider: existing?.messageProvider || 'unknown',
-    });
-  }
-  return res.json({ ok });
-});
-
-app.get('/devices/by-user/:userId', requireAuth, (req, res) => {
-  const userId = normalizeUserId(req.params.userId);
-  if (!userId) {
-    return res.status(400).json({ error: 'invalid_user_id' });
-  }
-  const devices = Array.from((devicesByUser.get(userId) || new Map()).values()).map(devicePublicView);
-  return res.json({ ok: true, userId, devices });
+registerDeviceRoutes({
+  app,
+  requireAuth,
+  requireSignedRequest,
+  buildRegisterSignaturePayload,
+  buildUnregisterSignaturePayload,
+  verifyAndBindPeerIdentity,
+  observability,
+  deviceRegistry,
+  normalizeUserId,
+  normalizeDeviceId,
+  normalizeStringValue,
+  normalizeTokenInput,
+  normalizeVoipTokenInput,
+  normalizePlatform,
 });
 
 app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignaturePayload), async (req, res) => {
@@ -1318,6 +601,14 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   const delivery = normalizeDelivery(req.body?.delivery);
   if (!senderUserId || recipientUserIds.length === 0 || !payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'invalid_payload' });
+  }
+  const binding = await enforcePeerIdentityBinding({
+    peerId: senderUserId,
+    signingPubB64: req.body.signingPub,
+    source: 'events_push',
+  });
+  if (!binding.ok) {
+    return res.status(401).json({ error: binding.error });
   }
   const dedupBody = {
     token: `virtual:${senderUserId}`,
@@ -1332,17 +623,17 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         : (typeof payload.callId === 'string' ? payload.callId : ''),
     },
   };
-  const dedup = tryAcquireDedup(dedupBody);
-  if (dedup.deduped) {
+  const dedupResult = dedup.tryAcquire(dedupBody);
+  if (dedupResult.deduped) {
     observability.recordPushEvent({ payload, delivery, deduped: true });
     return res.json({ ok: true, deduped: true, sent: 0, failed: 0 });
   }
   observability.recordPushEvent({ payload, delivery });
   const standardTargets = delivery.standard
-    ? getActiveTokensForUsers(recipientUserIds)
+    ? deviceRegistry.getActiveTokensForUsers(recipientUserIds)
     : [];
   const voipTargets = delivery.voip
-    ? getActiveVoipTokensForUsers(recipientUserIds)
+    ? deviceRegistry.getActiveVoipTokensForUsers(recipientUserIds)
     : [];
   console.log('[push][event][targets]', {
     senderUserId,
@@ -1352,7 +643,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
     standardTargets: standardTargets.map(describeFcmTarget),
     voipTargets: voipTargets.map(describeVoipTarget),
   });
-  const voipTopic = delivery.voip ? normalizeApnsVoipTopic(APNS_VOIP_TOPIC) : null;
+  const voipTopic = delivery.voip ? pushProviders.normalizeApnsVoipTopic(APNS_VOIP_TOPIC) : null;
   let standardSent = 0;
   let standardFailed = 0;
   for (const target of standardTargets) {
@@ -1360,11 +651,11 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const hasNotificationText = Boolean(notification?.title || notification?.body);
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       if (provider === 'apns') {
-        const apnsTopic = normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
+        const apnsTopic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
         if (!apnsTopic) {
           throw new Error('apns messages topic is not configured');
         }
-        await sendApnsAlert({
+        await pushProviders.sendApnsAlert({
           token: target.token,
           topic: apnsTopic,
           payload: {
@@ -1386,7 +677,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           },
         });
       } else {
-        await sendFcm({
+        await pushProviders.sendFcm({
           token: target.token,
           ...(hasNotificationText
             ? {
@@ -1430,7 +721,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   if (voipTopic) {
     for (const target of voipTargets) {
       try {
-        await sendApnsVoip({
+        await pushProviders.sendApnsVoip({
           token: target.token,
           topic: voipTopic,
           payload: {
@@ -1461,7 +752,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           failed: 1,
         });
         if (shouldInvalidateVoipToken(error)) {
-          const invalidated = unregisterVoipDevice({
+          const invalidated = deviceRegistry.unregisterVoipDevice({
             userId: target.userId,
             deviceId: target.deviceId,
             token: target.token,

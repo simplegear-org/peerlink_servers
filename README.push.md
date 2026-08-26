@@ -6,6 +6,18 @@ Push service for PeerLink. Stores device tokens and sends remote push:
 
 Main runtime file:
 - `push.js`
+- `devices/registry.js` — in-memory message/VoIP device token registry
+- `devices/routes.js` — `/devices/*` route wiring
+- `delivery/dedup-cache.js` — push event deduplication TTL cache
+- `delivery/providers.js` — FCM/APNs provider clients and APNs topic validation
+- `moderation/routes.js` — client/admin moderation route wiring
+- `observability.js` — PushObservability facade and Postgres schema bootstrap
+- `observability/server-discovery.js` — server URL extraction/normalization from push payloads
+- `observability/metrics.js` — Prometheus metrics builder and counters
+- `observability/moderation-helpers.js` — moderation score mappers and policy helpers
+- `observability/server-checker.js` — observed-server health checker loop
+- `security/signed-requests.js` — Ed25519 signed request verification and replay cache
+- `security/identity-bindings.js` — v2 peer identity binding and soft migration enforcement
 
 Runtime port inside stack:
 - `4500/tcp` (`push` container)
@@ -51,9 +63,18 @@ Request body:
 - `voipToken` (optional; iOS/macOS PushKit token for CallKit)
 - `platform` (required, example: `android`, `ios`)
 - `appVersion` (optional)
+- `identitySchemaVersion` (optional; `2` for verified identity binding)
+- `identityNonce` (optional; public nonce used to derive the v2 peer id)
+- `identityProofSig` (optional; signature of the identity binding payload)
 
 Signature payload:
 `id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|ts`
+
+For clients that include identity binding fields, the signature payload is:
+`id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|identitySchemaVersion|identityNonce|identityProofSig|ts`
+
+Identity proof payload:
+`peerlink_identity_binding_v2|peerId|signingPub|identityNonce`
 
 ### `POST /devices/unregister`
 
@@ -170,6 +191,8 @@ If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 
 - `GET /admin/moderation/summary` — total, processed, remaining/pending reports and warned/banned peer counts
 - `GET /admin/reports?status=pending|resolved|rejected|appealed|all` — report list for moderator UI
+- `GET /admin/moderation/reported-peers` — aggregate list of users who were reported, with total/direct/group report counts
+- `GET /admin/moderation/reporters` — aggregate list of users who filed reports, with total/direct/group report counts
 - `GET /admin/moderation/peer-scores?sort=report_count_desc|pending_desc|state_desc|last_report_desc` — sortable peer score list
 - `POST /admin/reports/:id/action` — applies `ignore`, `warn`, `suspend`, `ban`, `resolve`, or `reject`
 
@@ -181,6 +204,17 @@ If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 - Write endpoints `/devices/register`, `/devices/unregister`, `/events/push`
   require Ed25519 signature (`id`, `from`, `ts`, `sig`, `signingPub`) and replay
   protection by request id TTL cache.
+- `push.js` wires route-level security checks through
+  `security/signed-requests.js`; replay state is kept in that module and exposed
+  to health/metrics as cache size.
+- New clients bind `peerId` to `signingPub` during `/devices/register` by
+  proving `peerId == SHA-256("uid:v2:" + signingPub + ":" + identityNonce)`.
+  The server runs this in soft migration mode: legacy unbound clients still
+  work, but once a peer has a verified binding, mismatched keys are rejected for
+  `/events/push`, `/moderation/reports`, and `/moderation/appeals`.
+- v2 identity proof parsing, verification, persistence and enforcement live in
+  `security/identity-bindings.js`; `push.js` only calls the module from the
+  affected routes.
 - Client moderation write endpoints `/moderation/reports` and
   `/moderation/appeals` also require Ed25519 signatures and do not require
   `MODERATION_ADMIN_TOKEN`.
