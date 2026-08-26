@@ -26,6 +26,20 @@ Public ports:
 - `80/tcp` (`push-proxy` ACME challenge + redirect)
 - `443/tcp` (`push-proxy` TLS termination for push API)
 
+## Updating a Deployed Push Stack
+
+For servers that run GitHub-built images, apply an update with one command:
+
+```bash
+./update-push.sh
+```
+
+The script loads `.env.push.local`, fast-forwards the local checkout from
+`origin/main`, pulls the images referenced by the updated
+`docker-compose.push.yml`, runs
+`docker compose up -d --no-build`, shows container status and prints recent
+`push`/`server-checker` logs.
+
 ## Endpoints
 
 ### `GET /health`

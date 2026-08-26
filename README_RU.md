@@ -109,6 +109,17 @@ Security-логика push разнесена по отдельным модул
 - `security/identity-bindings.js` — v2 binding `peerId -> signingPub` и soft enforcement
 - `push.js` только подключает эти проверки к нужным маршрутам
 
+Обновление уже развернутого push stack выполняется одной командой:
+
+```bash
+./update-push.sh
+```
+
+Скрипт подгружает `.env.push.local`, обновляет checkout из `origin/main`,
+делает `docker compose pull` для images из обновленного
+`docker-compose.push.yml`, затем `docker compose up -d --no-build` и
+показывает статус с последними логами `push`/`server-checker`.
+
 Для write-endpoint’ов `push` используется relay-подобная Ed25519 проверка:
 - обязательные поля: `id`, `from`, `ts`, `sig`, `signingPub`
 - для `/devices/register` поле `from` должно совпадать с `userId`
