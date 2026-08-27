@@ -124,15 +124,22 @@ function createModerationStatusSigner(privateKeyValue) {
   }
   const publicKey = crypto.createPublicKey(privateKey);
   const signingPub = rawPublicKeyB64(publicKey);
+  const statusTimestamp = (value) => {
+    if (!value) return '';
+    if (value instanceof Date) return value.toISOString();
+    return String(value);
+  };
   return (score) => {
     const issuedAt = new Date().toISOString();
+    const warningIssuedAt = statusTimestamp(score.warningIssuedAt);
+    const bannedAt = statusTimestamp(score.bannedAt);
     const payload = [
       'peerlink_moderation_status_v1',
       score.peerId || '',
       score.policyState || 'clear',
       String(score.reportCount || 0),
-      score.warningIssuedAt || '',
-      score.bannedAt || '',
+      warningIssuedAt,
+      bannedAt,
       issuedAt,
     ].join('|');
     return {
@@ -140,8 +147,8 @@ function createModerationStatusSigner(privateKeyValue) {
       peerId: score.peerId,
       policyState: score.policyState || 'clear',
       reportCount: score.reportCount || 0,
-      warningIssuedAt: score.warningIssuedAt || null,
-      bannedAt: score.bannedAt || null,
+      warningIssuedAt: warningIssuedAt || null,
+      bannedAt: bannedAt || null,
       issuedAt,
       signingPub,
       sig: crypto.sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64'),

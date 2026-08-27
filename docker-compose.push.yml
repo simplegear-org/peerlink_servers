@@ -3,7 +3,7 @@ services:
     build:
       context: .
       target: push
-    image: ${PUSH_IMAGE:-tangash/push:1.4.3-2026082705}
+    image: ${PUSH_IMAGE:-tangash/push:1.4.4-2026082706}
     container_name: push
     restart: always
     expose:
@@ -42,7 +42,7 @@ services:
     build:
       context: .
       target: server-checker
-    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.3-2026082705}
+    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.4-2026082706}
     container_name: peerlink-server-checker
     restart: always
     depends_on:

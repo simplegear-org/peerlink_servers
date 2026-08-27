@@ -6,106 +6,161 @@
   <title>PeerLink X Moderation</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --text: #111827;
-      --muted: #667085;
-      --line: #d9dde5;
-      --accent: #1f7a5b;
-      --warn: #b7791f;
-      --danger: #b42318;
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #151b23;
+      --panel-2: #1f2630;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --line: #30363d;
+      --accent: #2ea043;
+      --accent-2: #58a6ff;
+      --warn: #d29922;
+      --danger: #f85149;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
     }
     header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
       display: flex;
-      gap: 16px;
+      gap: 18px;
       align-items: center;
       justify-content: space-between;
       padding: 18px 24px;
       border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      background: rgba(13, 17, 23, 0.94);
+      backdrop-filter: blur(12px);
     }
-    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
-    main { padding: 20px 24px 28px; display: grid; gap: 18px; }
-    .token { display: flex; gap: 8px; align-items: center; min-width: min(520px, 100%); }
-    input, select, textarea, button {
+    h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
+    main { width: min(1440px, 100%); margin: 0 auto; padding: 20px 24px 28px; }
+    input, button {
+      height: 38px;
       font: inherit;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
+      border-radius: 8px;
+      background: var(--panel);
       color: var(--text);
     }
-    input, select, textarea { padding: 8px 10px; }
-    input { width: 100%; }
+    input { width: 100%; padding: 0 12px; outline: none; }
+    input:focus { border-color: var(--accent-2); }
     button {
-      padding: 8px 12px;
+      padding: 0 13px;
       cursor: pointer;
       white-space: nowrap;
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
     }
+    button:hover { border-color: #6e7681; background: var(--panel-2); }
+    button:active { transform: translateY(1px); }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-    button.warn { background: var(--warn); border-color: var(--warn); color: #fff; }
+    button.warn { background: rgba(210, 153, 34, 0.16); border-color: rgba(210, 153, 34, 0.55); color: #f0c36a; }
+    button.danger { background: rgba(248, 81, 73, 0.16); border-color: rgba(248, 81, 73, 0.62); color: #ff938a; }
+    button.ghost { background: transparent; }
+    button[disabled] { cursor: default; opacity: 0.45; transform: none; }
+    .token { display: grid; grid-template-columns: minmax(220px, 420px) auto auto; gap: 8px; align-items: center; }
     .metrics {
       display: grid;
       grid-template-columns: repeat(3, minmax(120px, 1fr));
       gap: 12px;
+      margin-bottom: 16px;
     }
-    .metric, section {
+    .metric, .workspace {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
+      box-shadow: var(--shadow);
     }
     .metric { padding: 14px; }
     .metric span { display: block; color: var(--muted); font-size: 12px; }
-    .metric strong { display: block; margin-top: 6px; font-size: 26px; }
-    section { overflow: hidden; }
-    .section-head {
+    .metric strong { display: block; margin-top: 6px; font-size: 28px; line-height: 1; }
+    .tabs {
       display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
+      gap: 6px;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    .tab {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+    }
+    .tab.active {
+      background: var(--panel-2);
+      border-color: var(--line);
+      color: var(--text);
+    }
+    .view-head {
+      display: flex;
+      gap: 12px;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 14px;
+      padding: 14px 16px;
       border-bottom: 1px solid var(--line);
     }
-    .section-head h2 { margin: 0; font-size: 15px; }
-    .tools { display: flex; gap: 8px; align-items: center; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .view-title h2 { margin: 0; font-size: 15px; line-height: 1.25; }
+    .view-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 900px; }
     th, td {
-      padding: 10px 12px;
+      padding: 11px 12px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
       font-size: 13px;
       overflow-wrap: anywhere;
     }
-    th { color: var(--muted); font-weight: 600; background: #fafbfc; }
-    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #111820;
+    }
+    tr:hover td { background: rgba(88, 166, 255, 0.04); }
+    .actions { display: flex; gap: 7px; flex-wrap: wrap; }
     .badge {
       display: inline-block;
-      min-width: 64px;
-      padding: 3px 7px;
+      min-width: 68px;
+      padding: 4px 8px;
       border-radius: 999px;
-      background: #edf2f7;
+      border: 1px solid var(--line);
+      background: #111820;
       text-align: center;
       font-size: 12px;
+      color: var(--muted);
     }
-    .badge.warning { color: var(--warn); background: #fff7e6; }
-    .badge.banned { color: var(--danger); background: #fff1f0; }
-    .empty, .error { padding: 16px; color: var(--muted); }
+    .badge.warning { color: #f0c36a; border-color: rgba(210, 153, 34, 0.45); background: rgba(210, 153, 34, 0.12); }
+    .badge.banned { color: #ff938a; border-color: rgba(248, 81, 73, 0.5); background: rgba(248, 81, 73, 0.12); }
+    .empty, .error { padding: 28px 16px; color: var(--muted); text-align: center; }
     .error { color: var(--danger); }
+    .pager {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 12px 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pager strong { color: var(--text); font-weight: 600; }
     @media (max-width: 920px) {
       header { align-items: stretch; flex-direction: column; }
+      .token { grid-template-columns: 1fr auto auto; }
+      main { padding: 14px; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      table { min-width: 860px; }
-      section { overflow-x: auto; }
+      .view-head { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 560px) {
+      .token { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+      .pager { justify-content: space-between; }
     }
   </style>
 </head>
@@ -115,49 +170,50 @@
     <div class="token">
       <input id="token" type="password" placeholder="Moderator token">
       <button id="saveToken" class="primary" type="button">Save</button>
-      <button id="refresh" type="button">Refresh</button>
+      <button id="refresh" class="ghost" type="button">Refresh</button>
     </div>
   </header>
   <main>
     <div class="metrics" id="metrics"></div>
-
-    <section>
-      <div class="section-head">
-        <h2>Reported Users</h2>
+    <section class="workspace">
+      <nav class="tabs" aria-label="Moderation sections">
+        <button class="tab active" type="button" data-tab="reports">Incoming Reports</button>
+        <button class="tab" type="button" data-tab="reported">Reported Users</button>
+        <button class="tab" type="button" data-tab="reporters">Reporters</button>
+        <button class="tab" type="button" data-tab="appeals">Appeals</button>
+      </nav>
+      <div class="view-head">
+        <div class="view-title">
+          <h2 id="viewTitle">Incoming Reports</h2>
+          <p id="viewMeta">Metadata-only reports</p>
+        </div>
       </div>
-      <div id="reportedPeers"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Appeals</h2>
-      </div>
-      <div id="appeals"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Reporters</h2>
-      </div>
-      <div id="reporters"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Incoming Reports</h2>
-      </div>
-      <div id="reports"></div>
+      <div id="content"></div>
+      <div class="pager" id="pager"></div>
     </section>
   </main>
 
   <script>
     const apiBase = '/api';
+    const pageSize = 20;
     const tokenInput = document.querySelector('#token');
     const metricsEl = document.querySelector('#metrics');
-    const reportsEl = document.querySelector('#reports');
-    const reportedPeersEl = document.querySelector('#reportedPeers');
-    const reportersEl = document.querySelector('#reporters');
-    const appealsEl = document.querySelector('#appeals');
+    const contentEl = document.querySelector('#content');
+    const pagerEl = document.querySelector('#pager');
+    const titleEl = document.querySelector('#viewTitle');
+    const metaEl = document.querySelector('#viewMeta');
+    const tabs = Array.from(document.querySelectorAll('.tab'));
+    const state = {
+      activeTab: 'reports',
+      pages: { reports: 1, reported: 1, reporters: 1, appeals: 1 },
+      data: { reports: [], reported: [], reporters: [], appeals: [] },
+    };
+    const labels = {
+      reports: ['Incoming Reports', 'Metadata-only reports'],
+      reported: ['Reported Users', 'Peers reported by other users'],
+      reporters: ['Reporters', 'Users who submitted reports'],
+      appeals: ['Appeals', 'Ban appeals and unban actions'],
+    };
 
     tokenInput.value = sessionStorage.getItem('moderationToken') || '';
 
@@ -184,19 +240,6 @@
       return data;
     }
 
-    function metric(label, value) {
-      return `<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`;
-    }
-
-    function badge(value) {
-      const cls = value === 'banned' ? 'banned' : value === 'warning' ? 'warning' : '';
-      return `<span class="badge ${cls}">${value || 'clear'}</span>`;
-    }
-
-    function fmt(value) {
-      return value ? new Date(value).toLocaleString() : '-';
-    }
-
     function esc(value) {
       return String(value ?? '').replace(/[&<>"']/g, (char) => ({
         '&': '&amp;',
@@ -205,6 +248,19 @@
         '"': '&quot;',
         "'": '&#39;',
       }[char]));
+    }
+
+    function fmt(value) {
+      return value ? new Date(value).toLocaleString() : '-';
+    }
+
+    function metric(label, value) {
+      return `<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`;
+    }
+
+    function badge(value) {
+      const cls = value === 'banned' ? 'banned' : value === 'warning' ? 'warning' : '';
+      return `<span class="badge ${cls}">${esc(value || 'clear')}</span>`;
     }
 
     function defaultDecisionNote(action, reportCount, reporterCount) {
@@ -217,8 +273,7 @@
     }
 
     async function actPeer(peerId, action, reportCount, reporterCount) {
-      const defaultNote = defaultDecisionNote(action, reportCount, reporterCount);
-      const note = window.prompt('Moderator note', defaultNote);
+      const note = window.prompt('Moderator note', defaultDecisionNote(action, reportCount, reporterCount));
       if (note === null) return;
       await postJson(`/admin/moderation/peers/${encodeURIComponent(peerId)}/action`, {
         action,
@@ -238,39 +293,40 @@
     }
     window.unbanAppeal = unbanAppeal;
 
-    function renderPeerAggregate(target, peers, emptyText) {
-      if (!peers.length) {
-        target.innerHTML = `<div class="empty">${emptyText}</div>`;
-        return;
-      }
-      target.innerHTML = `<table>
-        <thead><tr>
-          <th>Peer ID</th><th>Total reports</th><th>Users</th><th>Direct</th><th>Group</th><th>Last report</th><th>Decision</th>
-        </tr></thead>
-        <tbody>${peers.map((peer) => `<tr>
-          <td>${esc(peer.peerId)}</td>
-          <td>${peer.reportCount}</td>
-          <td>${peer.reporterCount || 0}</td>
-          <td>${peer.directCount}</td>
-          <td>${peer.groupCount}</td>
-          <td>${fmt(peer.lastReportAt)}</td>
-          <td class="actions">
-            <button class="warn" type="button" onclick="actPeer('${esc(peer.peerId)}', 'warn', ${peer.reportCount || 0}, ${peer.reporterCount || 0})">Warn</button>
-            <button class="danger" type="button" onclick="actPeer('${esc(peer.peerId)}', 'ban', ${peer.reportCount || 0}, ${peer.reporterCount || 0})">Ban</button>
-          </td>
-        </tr>`).join('')}</tbody>
-      </table>`;
+    function pageItems(items) {
+      const page = state.pages[state.activeTab] || 1;
+      return items.slice((page - 1) * pageSize, page * pageSize);
     }
 
-    function renderReports(reports) {
-      if (!reports.length) {
-        reportsEl.innerHTML = '<div class="empty">No reports</div>';
+    function renderPager(items) {
+      const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+      const page = Math.min(state.pages[state.activeTab] || 1, totalPages);
+      state.pages[state.activeTab] = page;
+      if (items.length <= pageSize) {
+        pagerEl.innerHTML = '';
         return;
       }
-      reportsEl.innerHTML = `<table>
-        <thead><tr>
-          <th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Content</th>
-        </tr></thead>
+      const start = (page - 1) * pageSize + 1;
+      const end = Math.min(items.length, page * pageSize);
+      pagerEl.innerHTML = `
+        <span><strong>${start}-${end}</strong> of <strong>${items.length}</strong></span>
+        <button class="ghost" type="button" onclick="changePage(-1)" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+        <span>Page <strong>${page}</strong> / ${totalPages}</span>
+        <button class="ghost" type="button" onclick="changePage(1)" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+      `;
+    }
+
+    function changePage(delta) {
+      state.pages[state.activeTab] = (state.pages[state.activeTab] || 1) + delta;
+      render();
+    }
+    window.changePage = changePage;
+
+    function renderReports(items) {
+      const reports = pageItems(items);
+      if (!items.length) return '<div class="empty">No reports</div>';
+      return `<div class="table-wrap"><table>
+        <thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Content</th></tr></thead>
         <tbody>${reports.map((report) => `<tr>
           <td>${fmt(report.receivedAt)}</td>
           <td>${esc(report.reportedPeerId)}</td>
@@ -279,31 +335,56 @@
           <td>${esc(report.type)}</td>
           <td>metadata only</td>
         </tr>`).join('')}</tbody>
-      </table>`;
+      </table></div>`;
     }
 
-    function renderAppeals(appeals) {
-      if (!appeals.length) {
-        appealsEl.innerHTML = '<div class="empty">No appeals</div>';
-        return;
-      }
-      appealsEl.innerHTML = `<table>
-        <thead><tr>
-          <th>Created</th><th>Peer ID</th><th>Status</th><th>Appeal</th><th>Resolved</th><th>Decision</th>
-        </tr></thead>
+    function renderPeerAggregate(items, emptyText, withActions) {
+      const peers = pageItems(items);
+      if (!items.length) return `<div class="empty">${emptyText}</div>`;
+      return `<div class="table-wrap"><table>
+        <thead><tr><th>Peer ID</th><th>Total reports</th><th>Users</th><th>Direct</th><th>Group</th><th>Last report</th><th>${withActions ? 'Decision' : 'Status'}</th></tr></thead>
+        <tbody>${peers.map((peer) => `<tr>
+          <td>${esc(peer.peerId)}</td>
+          <td>${peer.reportCount || 0}</td>
+          <td>${peer.reporterCount || 0}</td>
+          <td>${peer.directCount || 0}</td>
+          <td>${peer.groupCount || 0}</td>
+          <td>${fmt(peer.lastReportAt)}</td>
+          <td class="actions">${withActions
+            ? `<button class="warn js-act-peer" type="button" data-peer="${esc(peer.peerId)}" data-action="warn" data-reports="${peer.reportCount || 0}" data-reporters="${peer.reporterCount || 0}">Warn</button><button class="danger js-act-peer" type="button" data-peer="${esc(peer.peerId)}" data-action="ban" data-reports="${peer.reportCount || 0}" data-reporters="${peer.reporterCount || 0}">Ban</button>`
+            : 'metadata only'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+    }
+
+    function renderAppeals(items) {
+      const appeals = pageItems(items);
+      if (!items.length) return '<div class="empty">No appeals</div>';
+      return `<div class="table-wrap"><table>
+        <thead><tr><th>Created</th><th>Peer ID</th><th>Status</th><th>Appeal</th><th>Resolved</th><th>Decision</th></tr></thead>
         <tbody>${appeals.map((appeal) => `<tr>
           <td>${fmt(appeal.createdAt)}</td>
           <td>${esc(appeal.peerId)}</td>
           <td>${esc(appeal.status)}</td>
           <td>${esc(appeal.text)}</td>
           <td>${fmt(appeal.resolvedAt)}</td>
-          <td class="actions">
-            ${appeal.status === 'open'
-              ? `<button class="primary" type="button" onclick="unbanAppeal('${esc(appeal.id)}', '${esc(appeal.peerId)}')">Unban</button>`
-              : esc(appeal.resolutionAction || '-')}
-          </td>
+          <td class="actions">${appeal.status === 'open'
+            ? `<button class="primary js-unban-appeal" type="button" data-appeal="${esc(appeal.id)}" data-peer="${esc(appeal.peerId)}">Unban</button>`
+            : esc(appeal.resolutionAction || '-')}</td>
         </tr>`).join('')}</tbody>
-      </table>`;
+      </table></div>`;
+    }
+
+    function render() {
+      tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === state.activeTab));
+      titleEl.textContent = labels[state.activeTab][0];
+      metaEl.textContent = labels[state.activeTab][1];
+      const items = state.data[state.activeTab] || [];
+      renderPager(items);
+      if (state.activeTab === 'reports') contentEl.innerHTML = renderReports(items);
+      if (state.activeTab === 'reported') contentEl.innerHTML = renderPeerAggregate(items, 'No reported users', true);
+      if (state.activeTab === 'reporters') contentEl.innerHTML = renderPeerAggregate(items, 'No reporters', false);
+      if (state.activeTab === 'appeals') contentEl.innerHTML = renderAppeals(items);
     }
 
     async function load() {
@@ -315,25 +396,46 @@
           getJson('/admin/moderation/reporters?limit=500'),
           getJson('/admin/moderation/appeals?status=all&limit=500'),
         ]);
-        const s = summary.summary;
+        const s = summary.summary || {};
         metricsEl.innerHTML = [
           metric('Reports', s.total),
           metric('Warnings', s.warned_peers),
           metric('Bans', s.banned_peers),
         ].join('');
-        renderPeerAggregate(reportedPeersEl, reportedPeers.peers || [], 'No reported users');
-        renderAppeals(appeals.appeals || []);
-        renderPeerAggregate(reportersEl, reporters.peers || [], 'No reporters');
-        renderReports(reports.reports || []);
+        state.data.reports = reports.reports || [];
+        state.data.reported = reportedPeers.peers || [];
+        state.data.reporters = reporters.peers || [];
+        state.data.appeals = appeals.appeals || [];
+        render();
       } catch (error) {
         metricsEl.innerHTML = '';
-        reportedPeersEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
-        appealsEl.innerHTML = '';
-        reportersEl.innerHTML = '';
-        reportsEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+        pagerEl.innerHTML = '';
+        contentEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
       }
     }
 
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        state.activeTab = tab.dataset.tab;
+        render();
+      });
+    });
+    contentEl.addEventListener('click', (event) => {
+      const actionButton = event.target.closest('.js-act-peer');
+      if (actionButton) {
+        actPeer(
+          actionButton.dataset.peer,
+          actionButton.dataset.action,
+          actionButton.dataset.reports,
+          actionButton.dataset.reporters,
+        );
+        return;
+      }
+      const unbanButton = event.target.closest('.js-unban-appeal');
+      if (unbanButton) {
+        unbanAppeal(unbanButton.dataset.appeal, unbanButton.dataset.peer);
+      }
+    });
     document.querySelector('#saveToken').addEventListener('click', () => {
       sessionStorage.setItem('moderationToken', tokenInput.value.trim());
       load();

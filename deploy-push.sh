@@ -99,6 +99,8 @@ write_moderation_ui_index() {
   if [[ -f "$MODERATION_UI_DIR/index.html" ]]; then
     return 0
   fi
+  echo "Missing checked-in moderation UI: $MODERATION_UI_DIR/index.html"
+  exit 1
   cat > "$MODERATION_UI_DIR/index.html" <<'EOF_MODERATION_HTML'
 <!doctype html>
 <html lang="en">
