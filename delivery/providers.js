@@ -195,6 +195,7 @@ export function createPushProviders({
       token,
       payload,
       pushType: 'voip',
+      priority: '10',
       topic: resolvedTopic,
     });
   }
@@ -212,11 +213,30 @@ export function createPushProviders({
       token,
       payload,
       pushType: 'alert',
+      priority: '10',
       topic: resolvedTopic,
     });
   }
 
-  async function sendApnsHttp2({ host, jwt, token, payload, pushType, topic }) {
+  async function sendApnsBackground({ token, payload, topic }) {
+    const jwt = getApnsJwt();
+    const host = apnsUseSandbox ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+    const resolvedTopic = normalizeApnsAlertTopic(topic) || normalizeApnsAlertTopic(apnsMessagesTopic);
+    if (!resolvedTopic) {
+      throw new Error('apns background topic is not configured or invalid');
+    }
+    return sendApnsHttp2({
+      host,
+      jwt,
+      token,
+      payload,
+      pushType: 'background',
+      priority: '5',
+      topic: resolvedTopic,
+    });
+  }
+
+  async function sendApnsHttp2({ host, jwt, token, payload, pushType, priority, topic }) {
     const body = JSON.stringify(payload);
     const response = await new Promise((resolve, reject) => {
       const client = http2.connect(host);
@@ -227,7 +247,7 @@ export function createPushProviders({
         ':path': `/3/device/${token}`,
         authorization: `bearer ${jwt}`,
         'apns-push-type': pushType,
-        'apns-priority': '10',
+        'apns-priority': priority,
         'apns-topic': topic,
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(body),
@@ -268,6 +288,7 @@ export function createPushProviders({
     normalizeApnsAlertTopic,
     normalizeApnsVoipTopic,
     sendApnsAlert,
+    sendApnsBackground,
     sendApnsVoip,
     sendFcm,
   };

@@ -180,10 +180,6 @@ function createModerationPolicyNotifier({
       ...(note ? { moderatorNote: note } : {}),
       ...(signedStatus ? { signedStatus } : {}),
     };
-    const notification = {
-      title: policyState === 'banned' ? 'PeerLink X account blocked' : 'PeerLink X warning',
-      body: payload.message,
-    };
     const standardTargets = deviceRegistry.getActiveTokensForUsers([peerId]);
     const voipTargets = deviceRegistry.getActiveVoipTokensForUsers([peerId]);
     let sent = 0;
@@ -194,14 +190,12 @@ function createModerationPolicyNotifier({
         if (provider === 'apns') {
           const topic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
           if (!topic) throw new Error('apns messages topic is not configured');
-          await pushProviders.sendApnsAlert({
+          await pushProviders.sendApnsBackground({
             token: target.token,
             topic,
             payload: {
               aps: {
-                alert: notification,
-                sound: 'default',
-                badge: 1,
+                'content-available': 1,
               },
               ...payload,
             },
@@ -210,7 +204,6 @@ function createModerationPolicyNotifier({
           await pushProviders.sendFcm({
             token: target.token,
             data: payload,
-            notification,
           });
         }
         sent += 1;
