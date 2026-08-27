@@ -79,7 +79,11 @@
 HTTP-сервис, который хранит токены устройств и отправляет push:
 - обычные события/уведомления через FCM и APNs alert
 - входящие звонки через data-only FCM и APNs VoIP (канал выбирает сервер)
-- moderation reports, appeals и peer score status для UGC/moderation flow
+- metadata-only moderation reports, appeals и ручной peer policy status для UGC/moderation flow
+- banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban` принимает только модератор
+- при ручном `warning`/`ban` push best-effort отправляет пользователю `moderation_policy`; payload содержит `messageKey`, `reportCount` и `reporterCount`, а клиент показывает текст на локали пользователя
+- Moderator UI предзаполняет note причиной с количеством жалоб и числом уникальных жалобщиков без раскрытия их Peer ID; клиент при `banned` локально закрывает коммуникационный UI и оставляет appeal
+- `GET /moderation/status` возвращает `signedStatus`, если задан `MODERATION_STATUS_SIGNING_PRIVATE_KEY`
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
 - `POST /devices/register` — регистрация/обновление устройства (`userId`, `deviceId`, `messageToken`, `messageProvider`, `voipToken?`, `platform`)
@@ -89,7 +93,7 @@ HTTP-сервис, который хранит токены устройств �
 - `POST /moderation/reports` — прием жалоб
 - `GET /moderation/status` — текущий moderation score/status по `peerId`
 - `POST /moderation/appeals` — прием апелляций
-- `GET /admin/reports` и `POST /admin/reports/:id/action` — очередь и действия модератора
+- `GET /admin/reports`, `POST /admin/reports/:id/action`, `POST /admin/moderation/peers/:peerId/action` — metadata-only очередь и ручные действия `warn`/`ban`
 - `GET /admin/moderation/reported-peers` — агрегат пользователей, на которых пожаловались: всего/direct/group
 - `GET /admin/moderation/reporters` — агрегат пользователей, которые жалуются: всего/direct/group
 - `GET /health` — статус конфигурации FCM и защитных механизмов
@@ -142,9 +146,10 @@ Security-логика push разнесена по отдельным модул
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
-Moderation scoring хранится в Postgres observability DB:
-- 10 жалоб на один `reportedPeerId` переводят peer в `warning`
-- 20 жалоб переводят peer в `banned`
+Moderation policy хранится в Postgres observability DB:
+- жалобы только увеличивают счетчики по `reportedPeerId`
+- `warning` и `banned` выставляет только модератор, автоматических переходов по числу жалоб нет
+- `banned` peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; relay/bootstrap не требуют доступа к moderation DB
 - admin endpoints защищены `MODERATION_ADMIN_TOKEN` или, если он не задан, `PUSH_API_TOKEN`
 - клиентские `POST /moderation/reports` и `POST /moderation/appeals` защищены
   Ed25519-подписью peer, без доставки admin token в приложение

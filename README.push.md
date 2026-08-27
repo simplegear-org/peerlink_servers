@@ -166,10 +166,8 @@ Request body:
 Signature payload:
 `id|from|reportedPeerId|reason|type|contentEncrypted|encryptedContentJson|ts`
 
-The endpoint returns the stored report, current peer score and active
-moderation thresholds. Default scoring policy:
-- `10` reports for one `reportedPeerId` -> `warning`
-- `20` reports for one `reportedPeerId` -> `banned`
+The endpoint returns the stored report and current peer score. Report counts
+are moderator context only; they never trigger automatic warning or ban actions.
 
 ### `GET /moderation/status?peerId=<peerId>`
 
@@ -177,6 +175,7 @@ Returns moderation score and policy state for one peer id.
 
 Response includes:
 - `reportCount`
+- `reporterCount`
 - `pendingCount`
 - `processedCount`
 - `appealedCount`
@@ -204,12 +203,20 @@ These endpoints require `Authorization: Bearer <MODERATION_ADMIN_TOKEN>`.
 If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 `PUSH_API_TOKEN`.
 
-- `GET /admin/moderation/summary` — total, processed, remaining/pending reports and warned/banned peer counts
-- `GET /admin/reports?status=pending|resolved|rejected|appealed|all` — report list for moderator UI
+- `GET /admin/moderation/summary` — total reports and warned/banned peer counts
+- `GET /admin/reports` — metadata-only report list for moderator UI
 - `GET /admin/moderation/reported-peers` — aggregate list of users who were reported, with total/direct/group report counts
 - `GET /admin/moderation/reporters` — aggregate list of users who filed reports, with total/direct/group report counts
-- `GET /admin/moderation/peer-scores?sort=report_count_desc|pending_desc|state_desc|last_report_desc` — sortable peer score list
-- `POST /admin/reports/:id/action` — applies `ignore`, `warn`, `suspend`, `ban`, `resolve`, or `reject`
+- `GET /admin/moderation/peer-scores?sort=report_count_desc|state_desc|last_report_desc` — sortable peer score list
+- `POST /admin/reports/:id/action` — applies `warn` or `ban` to the reported peer
+- `POST /admin/moderation/peers/:peerId/action` — applies `warn` or `ban` directly to a peer
+
+Manual `warn`/`ban` actions send a best-effort `moderation_policy` push to the
+target peer. The moderator UI pre-fills the note with the current report count
+and unique reporter count without exposing reporter Peer IDs. The push payload
+includes `messageKey`, `reportCount`, and `reporterCount`; the app renders the
+warning/ban text using the user's locale. `ban` is persisted locally and used to
+block communication UI while keeping `POST /moderation/appeals` available.
 
 ## Security
 
@@ -256,8 +263,7 @@ Common write errors:
 - `PUSH_SIGNATURE_SKEW_SECONDS` (default `120`)
 - `PUSH_SIGNED_ID_TTL_SECONDS` (default `300`)
 - `MODERATION_ADMIN_TOKEN` (admin bearer token for moderator UI/API; falls back to `PUSH_API_TOKEN`)
-- `MODERATION_WARNING_REPORT_THRESHOLD` (default `10`)
-- `MODERATION_BAN_REPORT_THRESHOLD` (default `20`)
+- `MODERATION_STATUS_SIGNING_PRIVATE_KEY` (optional Ed25519 PKCS#8 private key, PEM or base64 DER, for signed `/moderation/status`)
 
 FCM:
 - `FCM_PROJECT_ID`
@@ -307,8 +313,7 @@ Required environment variables:
 - `PUSH_ORIGIN_KEY_PEM` when `PUSH_TLS_PROVIDER=cloudflare_origin`
 - `PUSH_API_TOKEN`
 - `MODERATION_ADMIN_TOKEN`
-- `MODERATION_WARNING_REPORT_THRESHOLD`
-- `MODERATION_BAN_REPORT_THRESHOLD`
+- `MODERATION_STATUS_SIGNING_PRIVATE_KEY`
 - `FCM_PROJECT_ID`
 - `FCM_CREDENTIALS_JSON`
 - `APNS_TEAM_ID`

@@ -40,18 +40,11 @@ app.use((req, res, next) => {
 const PORT = Number.parseInt(process.env.PORT || '4500', 10);
 const API_TOKEN = (process.env.PUSH_API_TOKEN || '').trim();
 const MODERATION_ADMIN_TOKEN = (process.env.MODERATION_ADMIN_TOKEN || API_TOKEN).trim();
-const MODERATION_WARNING_REPORT_THRESHOLD = positiveInt(
-  process.env.MODERATION_WARNING_REPORT_THRESHOLD,
-  10,
-);
-const MODERATION_BAN_REPORT_THRESHOLD = positiveInt(
-  process.env.MODERATION_BAN_REPORT_THRESHOLD,
-  20,
-);
 const DEDUP_TTL_SECONDS = Number.parseInt(process.env.PUSH_DEDUP_TTL_SECONDS || '30', 10);
 const MAX_DEVICES_PER_USER = Number.parseInt(process.env.PUSH_MAX_DEVICES_PER_USER || '20', 10);
 const SIGNATURE_SKEW_SECONDS = Number.parseInt(process.env.PUSH_SIGNATURE_SKEW_SECONDS || '120', 10);
 const SIGNED_ID_TTL_SECONDS = Number.parseInt(process.env.PUSH_SIGNED_ID_TTL_SECONDS || '300', 10);
+const MODERATION_STATUS_SIGNING_PRIVATE_KEY = (process.env.MODERATION_STATUS_SIGNING_PRIVATE_KEY || '').trim();
 
 const FCM_PROJECT_ID = (process.env.FCM_PROJECT_ID || '').trim();
 const FCM_CREDENTIALS_JSON = (process.env.FCM_CREDENTIALS_JSON || '').trim();
@@ -96,15 +89,167 @@ const {
   verifyAndBindPeerIdentity,
   enforcePeerIdentityBinding,
 } = identityBindings;
-
-const moderationThresholds = {
-  warningThreshold: MODERATION_WARNING_REPORT_THRESHOLD,
-  banThreshold: MODERATION_BAN_REPORT_THRESHOLD,
-};
+const signModerationStatus = createModerationStatusSigner(MODERATION_STATUS_SIGNING_PRIVATE_KEY);
+const notifyModerationPolicy = createModerationPolicyNotifier({
+  deviceRegistry,
+  pushProviders,
+  signModerationStatus,
+});
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function rawPublicKeyB64(publicKey) {
+  const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+  const der = publicKey.export({ type: 'spki', format: 'der' });
+  return der.subarray(spkiPrefix.length).toString('base64');
+}
+
+function createModerationStatusSigner(privateKeyValue) {
+  if (!privateKeyValue) return null;
+  let privateKey;
+  try {
+    privateKey = privateKeyValue.includes('BEGIN PRIVATE KEY')
+      ? crypto.createPrivateKey(privateKeyValue)
+      : crypto.createPrivateKey({
+          key: Buffer.from(privateKeyValue, 'base64'),
+          format: 'der',
+          type: 'pkcs8',
+        });
+  } catch (error) {
+    console.warn('[push][moderation] invalid status signing key:', error instanceof Error ? error.message : String(error));
+    return null;
+  }
+  const publicKey = crypto.createPublicKey(privateKey);
+  const signingPub = rawPublicKeyB64(publicKey);
+  return (score) => {
+    const issuedAt = new Date().toISOString();
+    const payload = [
+      'peerlink_moderation_status_v1',
+      score.peerId || '',
+      score.policyState || 'clear',
+      String(score.reportCount || 0),
+      score.warningIssuedAt || '',
+      score.bannedAt || '',
+      issuedAt,
+    ].join('|');
+    return {
+      schema: 'peerlink_moderation_status_v1',
+      peerId: score.peerId,
+      policyState: score.policyState || 'clear',
+      reportCount: score.reportCount || 0,
+      warningIssuedAt: score.warningIssuedAt || null,
+      bannedAt: score.bannedAt || null,
+      issuedAt,
+      signingPub,
+      sig: crypto.sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64'),
+    };
+  };
+}
+
+function createModerationPolicyNotifier({
+  deviceRegistry,
+  pushProviders,
+  signModerationStatus,
+}) {
+  return async function notifyModerationPolicy({ score, action, note }) {
+    const peerId = score?.peerId;
+    if (!peerId) {
+      return { sent: 0, failed: 0, devices: 0 };
+    }
+    const policyState = score.policyState || (action === 'ban' ? 'banned' : 'warning');
+    const signedStatus = signModerationStatus ? signModerationStatus(score) : null;
+    const reportCount = Number(score.reportCount || 0);
+    const reporterCount = Number(score.reporterCount || 0);
+    const messageKey = policyState === 'banned'
+      ? 'moderationBanMessage'
+      : 'moderationWarningMessage';
+    const payload = {
+      type: 'moderation_policy',
+      peerId,
+      policyState,
+      action,
+      messageKey,
+      reportCount: String(reportCount),
+      reporterCount: String(reporterCount),
+      message: policyState === 'banned'
+        ? `Your PeerLink X account has been blocked after ${reportCount} reports from ${reporterCount} users. You can submit an appeal in the app.`
+        : `Your PeerLink X account received ${reportCount} reports from ${reporterCount} users and may be blocked if more reports are received.`,
+      ...(note ? { moderatorNote: note } : {}),
+      ...(signedStatus ? { signedStatus } : {}),
+    };
+    const notification = {
+      title: policyState === 'banned' ? 'PeerLink X account blocked' : 'PeerLink X warning',
+      body: payload.message,
+    };
+    const standardTargets = deviceRegistry.getActiveTokensForUsers([peerId]);
+    const voipTargets = deviceRegistry.getActiveVoipTokensForUsers([peerId]);
+    let sent = 0;
+    let failed = 0;
+    for (const target of standardTargets) {
+      try {
+        const provider = (target.messageProvider || 'fcm').toLowerCase();
+        if (provider === 'apns') {
+          const topic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
+          if (!topic) throw new Error('apns messages topic is not configured');
+          await pushProviders.sendApnsAlert({
+            token: target.token,
+            topic,
+            payload: {
+              aps: {
+                alert: notification,
+                sound: 'default',
+                badge: 1,
+              },
+              ...payload,
+            },
+          });
+        } else {
+          await pushProviders.sendFcm({
+            token: target.token,
+            data: payload,
+            notification,
+          });
+        }
+        sent += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn(
+          `[push][moderation] policy push failed peerId=${peerId} deviceId=${target.deviceId}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    const voipTopic = pushProviders.normalizeApnsVoipTopic(APNS_VOIP_TOPIC);
+    if (voipTopic) {
+      for (const target of voipTargets) {
+        try {
+          await pushProviders.sendApnsVoip({
+            token: target.token,
+            topic: voipTopic,
+            payload: {
+              aps: { 'content-available': 1 },
+              ...payload,
+            },
+          });
+          sent += 1;
+        } catch (error) {
+          failed += 1;
+          console.warn(
+            `[push][moderation] policy voip push failed peerId=${peerId} deviceId=${target.deviceId}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    }
+    return {
+      sent,
+      failed,
+      devices: standardTargets.length + (voipTopic ? voipTargets.length : 0),
+    };
+  };
 }
 
 function parseBearerToken(authHeader) {
@@ -226,12 +371,12 @@ function normalizeTimestamp(value) {
 function normalizeModerationStatus(value) {
   const status = normalizeStringValue(value, 32)?.toLowerCase();
   if (!status || status === 'all') return 'all';
-  return ['pending', 'resolved', 'rejected', 'appealed'].includes(status) ? status : null;
+  return ['pending', 'resolved', 'rejected', 'appealed'].includes(status) ? 'all' : null;
 }
 
 function normalizeModerationAction(value) {
   const action = normalizeStringValue(value, 32)?.toLowerCase();
-  return ['ignore', 'warn', 'suspend', 'ban', 'resolve', 'reject'].includes(action) ? action : null;
+  return ['warn', 'ban'].includes(action) ? action : null;
 }
 
 function normalizeDeviceId(value) {
@@ -520,7 +665,8 @@ registerModerationRoutes({
   buildModerationAppealSignaturePayload,
   enforcePeerIdentityBinding,
   observability,
-  moderationThresholds,
+  signModerationStatus,
+  notifyModerationPolicy,
   normalizeModerationReport,
   normalizeModerationStatus,
   normalizeModerationAction,
@@ -610,6 +756,17 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   if (!binding.ok) {
     return res.status(401).json({ error: binding.error });
   }
+  if (await observability.isPeerBanned(senderUserId)) {
+    return res.status(403).json({ error: 'peer_banned' });
+  }
+  const allowedRecipients = await observability.filterAllowedPeers(recipientUserIds);
+  if (allowedRecipients.allowed.length === 0) {
+    return res.status(403).json({
+      ok: false,
+      error: 'all_recipients_banned',
+      bannedRecipients: allowedRecipients.banned,
+    });
+  }
   const dedupBody = {
     token: `virtual:${senderUserId}`,
     data: {
@@ -630,14 +787,15 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   }
   observability.recordPushEvent({ payload, delivery });
   const standardTargets = delivery.standard
-    ? deviceRegistry.getActiveTokensForUsers(recipientUserIds)
+    ? deviceRegistry.getActiveTokensForUsers(allowedRecipients.allowed)
     : [];
   const voipTargets = delivery.voip
-    ? deviceRegistry.getActiveVoipTokensForUsers(recipientUserIds)
+    ? deviceRegistry.getActiveVoipTokensForUsers(allowedRecipients.allowed)
     : [];
   console.log('[push][event][targets]', {
     senderUserId,
-    recipients: recipientUserIds,
+    recipients: allowedRecipients.allowed,
+    bannedRecipients: allowedRecipients.banned,
     delivery,
     pushKeys: Object.keys(payload),
     standardTargets: standardTargets.map(describeFcmTarget),
@@ -778,7 +936,8 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
     ok: true,
     provider: delivery.voip ? 'mixed' : 'standard',
     deduped: false,
-    recipients: recipientUserIds.length,
+    recipients: allowedRecipients.allowed.length,
+    bannedRecipients: allowedRecipients.banned,
     devices: standardTargets.length + voipTargets.length,
     sent,
     failed,

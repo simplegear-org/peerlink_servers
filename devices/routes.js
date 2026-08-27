@@ -39,6 +39,9 @@ export function registerDeviceRoutes({
         error: binding.error,
       });
     }
+    if (await observability.isPeerBanned(userId)) {
+      return res.status(403).json({ error: 'peer_banned' });
+    }
     console.log('[push][register]', {
       userId,
       deviceId,

@@ -118,7 +118,7 @@ write_moderation_ui_index() {
     button.danger { background: #b42318; border-color: #b42318; color: #fff; }
     .token { display: flex; gap: 8px; align-items: center; min-width: min(520px, 100%); }
     .token input { width: 100%; }
-    .metrics { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 12px; }
+    .metrics { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 12px; }
     .metric, section { background: #fff; border: 1px solid #d9dde5; border-radius: 8px; }
     .metric { padding: 14px; }
     .metric span { display: block; color: #667085; font-size: 12px; }
@@ -150,11 +150,11 @@ write_moderation_ui_index() {
   <main>
     <div class="metrics" id="metrics"></div>
     <section>
-      <div class="section-head"><h2>Reports</h2><select id="status"><option value="pending">Pending</option><option value="all">All</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option><option value="appealed">Appealed</option></select></div>
+      <div class="section-head"><h2>Reports</h2></div>
       <div id="reports"></div>
     </section>
     <section>
-      <div class="section-head"><h2>Peer Scores</h2><select id="sort"><option value="report_count_desc">Reports</option><option value="pending_desc">Pending</option><option value="state_desc">Policy</option><option value="last_report_desc">Last report</option></select></div>
+      <div class="section-head"><h2>Peer Scores</h2><select id="sort"><option value="report_count_desc">Reports</option><option value="state_desc">Policy</option><option value="last_report_desc">Last report</option></select></div>
       <div id="scores"></div>
     </section>
   </main>
@@ -164,7 +164,6 @@ write_moderation_ui_index() {
     const metricsEl = document.querySelector('#metrics');
     const reportsEl = document.querySelector('#reports');
     const scoresEl = document.querySelector('#scores');
-    const statusEl = document.querySelector('#status');
     const sortEl = document.querySelector('#sort');
     tokenInput.value = sessionStorage.getItem('moderationToken') || '';
     function authHeaders() { const token = tokenInput.value.trim(); return token ? { Authorization: `Bearer ${token}` } : {}; }
@@ -174,21 +173,22 @@ write_moderation_ui_index() {
     function badge(value) { const cls = value === 'banned' ? 'banned' : value === 'warning' ? 'warning' : ''; return `<span class="badge ${cls}">${esc(value || 'clear')}</span>`; }
     function fmt(value) { return value ? new Date(value).toLocaleString() : '-'; }
     function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
-    async function act(reportId, action) { const note = window.prompt('Moderator note', '') || ''; await postJson(`/admin/reports/${encodeURIComponent(reportId)}/action`, { action, note }); await load(); }
-    window.act = act;
+    function defaultDecisionNote(action, reportCount, reporterCount) { const reports = Number(reportCount || 0); const reporters = Number(reporterCount || 0); return action === 'ban' ? `Account blocked because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.` : `Warning issued because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`; }
+    async function actPeer(peerId, action, reportCount, reporterCount) { const note = window.prompt('Moderator note', defaultDecisionNote(action, reportCount, reporterCount)); if (note === null) return; await postJson(`/admin/moderation/peers/${encodeURIComponent(peerId)}/action`, { action, note, reportCount, reporterCount }); await load(); }
+    window.actPeer = actPeer;
     function renderReports(reports) {
       if (!reports.length) { reportsEl.innerHTML = '<div class="empty">No reports</div>'; return; }
-      reportsEl.innerHTML = `<table><thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Content</th><th>Actions</th></tr></thead><tbody>${reports.map((report) => `<tr><td>${fmt(report.receivedAt)}</td><td>${esc(report.reportedPeerId)}</td><td>${esc(report.reporterPeerId)}</td><td>${esc(report.reason)}</td><td>${badge(report.status)}</td><td>${report.contentEncrypted ? 'encrypted message attached' : 'metadata only'}</td><td class="actions"><button onclick="act('${esc(report.id)}', 'ignore')">Ignore</button><button class="warn" onclick="act('${esc(report.id)}', 'warn')">Warn</button><button onclick="act('${esc(report.id)}', 'suspend')">Suspend</button><button class="danger" onclick="act('${esc(report.id)}', 'ban')">Ban</button></td></tr>`).join('')}</tbody></table>`;
+      reportsEl.innerHTML = `<table><thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Content</th></tr></thead><tbody>${reports.map((report) => `<tr><td>${fmt(report.receivedAt)}</td><td>${esc(report.reportedPeerId)}</td><td>${esc(report.reporterPeerId)}</td><td>${esc(report.reason)}</td><td>metadata only</td></tr>`).join('')}</tbody></table>`;
     }
     function renderScores(scores) {
       if (!scores.length) { scoresEl.innerHTML = '<div class="empty">No peer reports</div>'; return; }
-      scoresEl.innerHTML = `<table><thead><tr><th>Peer ID</th><th>Reports</th><th>Pending</th><th>Processed</th><th>Appealed</th><th>Policy</th><th>Last report</th></tr></thead><tbody>${scores.map((score) => `<tr><td>${esc(score.peerId)}</td><td>${score.reportCount}</td><td>${score.pendingCount}</td><td>${score.processedCount}</td><td>${score.appealedCount}</td><td>${badge(score.policyState)}</td><td>${fmt(score.lastReportAt)}</td></tr>`).join('')}</tbody></table>`;
+      scoresEl.innerHTML = `<table><thead><tr><th>Peer ID</th><th>Reports</th><th>Users</th><th>Policy</th><th>Last report</th><th>Actions</th></tr></thead><tbody>${scores.map((score) => `<tr><td>${esc(score.peerId)}</td><td>${score.reportCount}</td><td>${score.reporterCount || 0}</td><td>${badge(score.policyState)}</td><td>${fmt(score.lastReportAt)}</td><td class="actions"><button class="warn" onclick="actPeer('${esc(score.peerId)}', 'warn', ${score.reportCount || 0}, ${score.reporterCount || 0})">Warn</button><button class="danger" onclick="actPeer('${esc(score.peerId)}', 'ban', ${score.reportCount || 0}, ${score.reporterCount || 0})">Ban</button></td></tr>`).join('')}</tbody></table>`;
     }
     async function load() {
       try {
-        const [summary, reports, scores] = await Promise.all([getJson('/admin/moderation/summary'), getJson(`/admin/reports?status=${encodeURIComponent(statusEl.value)}`), getJson(`/admin/moderation/peer-scores?sort=${encodeURIComponent(sortEl.value)}`)]);
+        const [summary, reports, scores] = await Promise.all([getJson('/admin/moderation/summary'), getJson('/admin/reports?limit=500'), getJson(`/admin/moderation/peer-scores?sort=${encodeURIComponent(sortEl.value)}`)]);
         const s = summary.summary;
-        metricsEl.innerHTML = [metric('Reports', s.total), metric('Processed', s.processed), metric('Remaining', s.remaining), metric('Pending', s.pending), metric('Warnings', s.warned_peers), metric('Bans', s.banned_peers)].join('');
+        metricsEl.innerHTML = [metric('Reports', s.total), metric('Warnings', s.warned_peers), metric('Bans', s.banned_peers)].join('');
         renderReports(reports.reports || []);
         renderScores(scores.scores || []);
       } catch (error) {
@@ -199,7 +199,6 @@ write_moderation_ui_index() {
     }
     document.querySelector('#saveToken').addEventListener('click', () => { sessionStorage.setItem('moderationToken', tokenInput.value.trim()); load(); });
     document.querySelector('#refresh').addEventListener('click', load);
-    statusEl.addEventListener('change', load);
     sortEl.addEventListener('change', load);
     load();
   </script>

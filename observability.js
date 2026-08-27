@@ -9,9 +9,7 @@ import {
   mapModerationReportAggregate,
   mapModerationScore,
   mapPeerIdentityBinding,
-  moderationPolicyForCount,
   moderationScoreOrderBy,
-  moderationStatusForAction,
   refreshModerationPeerScore,
   setModerationPeerPolicy,
 } from './observability/moderation-helpers.js';
@@ -46,6 +44,7 @@ export class PushObservability {
     this.observedServers = new Map();
     this.moderationReports = new Map();
     this.moderationAppeals = new Map();
+    this.moderationPeerPolicies = new Map();
     this.peerIdentityBindings = new Map();
   }
 
@@ -176,7 +175,7 @@ export class PushObservability {
     return true;
   }
 
-  async createModerationReport(report, thresholds) {
+  async createModerationReport(report) {
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
@@ -201,7 +200,7 @@ export class PushObservability {
           ],
         );
         const stored = result.rows[0] || (await client.query('select * from moderation_reports where id = $1', [report.id])).rows[0];
-        const score = await refreshModerationPeerScore(client, report.reportedPeerId, thresholds);
+        const score = await refreshModerationPeerScore(client, report.reportedPeerId);
         await client.query('commit');
         return { report: mapModerationReport(stored), score };
       } catch (error) {
@@ -226,26 +225,53 @@ export class PushObservability {
     }
     return {
       report: this.moderationReports.get(report.id),
-      score: this.memoryModerationStatus(report.reportedPeerId, thresholds),
+      score: this.memoryModerationStatus(report.reportedPeerId),
     };
   }
 
-  async moderationStatus(peerId, thresholds) {
+  async moderationStatus(peerId) {
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
-        return await refreshModerationPeerScore(client, peerId, thresholds);
+        return await refreshModerationPeerScore(client, peerId);
       } finally {
         client.release();
       }
     }
-    return this.memoryModerationStatus(peerId, thresholds);
+    return this.memoryModerationStatus(peerId);
   }
 
-  memoryModerationStatus(peerId, thresholds = {}) {
+  async isPeerBanned(peerId) {
+    if (!peerId) return false;
+    if (this.dbReady) {
+      const result = await this.pool.query(
+        `select policy_state from moderation_peer_scores where peer_id = $1`,
+        [peerId],
+      );
+      return result.rows[0]?.policy_state === 'banned';
+    }
+    return this.moderationPeerPolicies.get(peerId)?.policyState === 'banned';
+  }
+
+  async filterAllowedPeers(peerIds) {
+    const uniquePeerIds = [...new Set(peerIds.filter(Boolean))];
+    const banned = new Set();
+    for (const peerId of uniquePeerIds) {
+      if (await this.isPeerBanned(peerId)) {
+        banned.add(peerId);
+      }
+    }
+    return {
+      allowed: uniquePeerIds.filter((peerId) => !banned.has(peerId)),
+      banned: [...banned],
+    };
+  }
+
+  memoryModerationStatus(peerId) {
     const reports = [...this.moderationReports.values()].filter((report) => report.reportedPeerId === peerId);
     const reportCount = reports.length;
-    const policyState = moderationPolicyForCount(reportCount, thresholds);
+    const reporterCount = new Set(reports.map((report) => report.reporterPeerId).filter(Boolean)).size;
+    const policy = this.moderationPeerPolicies.get(peerId);
     const lastReportAt = reports
       .map((report) => report.receivedAt)
       .filter(Boolean)
@@ -254,12 +280,13 @@ export class PushObservability {
     return {
       peerId,
       reportCount,
-      pendingCount: reports.filter((report) => report.status === 'pending').length,
-      processedCount: reports.filter((report) => ['resolved', 'rejected'].includes(report.status)).length,
-      appealedCount: reports.filter((report) => report.status === 'appealed').length,
-      policyState,
-      warningIssuedAt: policyState === 'warning' || policyState === 'banned' ? lastReportAt : null,
-      bannedAt: policyState === 'banned' ? lastReportAt : null,
+      reporterCount,
+      pendingCount: reports.length,
+      processedCount: 0,
+      appealedCount: 0,
+      policyState: policy?.policyState || 'clear',
+      warningIssuedAt: policy?.warningIssuedAt || null,
+      bannedAt: policy?.bannedAt || null,
       lastReportAt,
       updatedAt: nowIso(),
     };
@@ -270,9 +297,9 @@ export class PushObservability {
       const result = await this.pool.query(
         `select
            count(*)::int as total,
-           count(*) filter (where status = 'pending')::int as pending,
-           count(*) filter (where status in ('resolved', 'rejected'))::int as processed,
-           count(*) filter (where status = 'appealed')::int as appealed
+           count(*)::int as pending,
+           0::int as processed,
+           0::int as appealed
          from moderation_reports`,
       );
       const peers = await this.pool.query(
@@ -287,10 +314,10 @@ export class PushObservability {
     const scores = new Map(reports.map((report) => [report.reportedPeerId, this.memoryModerationStatus(report.reportedPeerId)]));
     return {
       total: reports.length,
-      pending: reports.filter((report) => report.status === 'pending').length,
-      processed: reports.filter((report) => ['resolved', 'rejected'].includes(report.status)).length,
-      appealed: reports.filter((report) => report.status === 'appealed').length,
-      remaining: reports.filter((report) => report.status === 'pending').length,
+      pending: reports.length,
+      processed: 0,
+      appealed: 0,
+      remaining: reports.length,
       warned_peers: [...scores.values()].filter((score) => score.policyState === 'warning').length,
       banned_peers: [...scores.values()].filter((score) => score.policyState === 'banned').length,
     };
@@ -300,10 +327,6 @@ export class PushObservability {
     if (this.dbReady) {
       const filters = [];
       const values = [];
-      if (status && status !== 'all') {
-        values.push(status);
-        filters.push(`status = $${values.length}`);
-      }
       if (reportedPeerId) {
         values.push(reportedPeerId);
         filters.push(`reported_peer_id = $${values.length}`);
@@ -317,13 +340,12 @@ export class PushObservability {
       return result.rows.map(mapModerationReport);
     }
     return [...this.moderationReports.values()]
-      .filter((report) => !status || status === 'all' || report.status === status)
       .filter((report) => !reportedPeerId || report.reportedPeerId === reportedPeerId)
       .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
       .slice(0, limit);
   }
 
-  async listModerationPeerScores({ sort = 'report_count_desc', limit = 500, thresholds } = {}) {
+  async listModerationPeerScores({ sort = 'report_count_desc', limit = 500 } = {}) {
     if (this.dbReady) {
       const orderBy = moderationScoreOrderBy(sort);
       const result = await this.pool.query(
@@ -334,18 +356,20 @@ export class PushObservability {
     }
     const peerIds = [...new Set([...this.moderationReports.values()].map((report) => report.reportedPeerId))];
     return peerIds
-      .map((peerId) => this.memoryModerationStatus(peerId, thresholds))
+      .map((peerId) => this.memoryModerationStatus(peerId))
       .sort((a, b) => compareModerationScores(a, b, sort))
       .slice(0, limit);
   }
 
   async listModerationReportAggregates({ role = 'reported', limit = 500 } = {}) {
     const peerColumn = role === 'reporter' ? 'reporter_peer_id' : 'reported_peer_id';
+    const distinctCounterColumn = role === 'reporter' ? 'reported_peer_id' : 'reporter_peer_id';
     if (this.dbReady) {
       const result = await this.pool.query(
         `select
            ${peerColumn} as peer_id,
            count(*)::int as report_count,
+           count(distinct ${distinctCounterColumn})::int as reporter_count,
            count(*) filter (where type = 'direct_report')::int as direct_count,
            count(*) filter (where type = 'group_report')::int as group_count,
            max(received_at) as last_report_at
@@ -365,9 +389,12 @@ export class PushObservability {
         reportCount: 0,
         directCount: 0,
         groupCount: 0,
+        reporterCount: 0,
         lastReportAt: null,
+        distinctCounter: new Set(),
       };
       current.reportCount += 1;
+      current.distinctCounter.add(role === 'reporter' ? report.reportedPeerId : report.reporterPeerId);
       if (report.type === 'group_report') current.groupCount += 1;
       else current.directCount += 1;
       if (!current.lastReportAt || String(report.receivedAt).localeCompare(String(current.lastReportAt)) > 0) {
@@ -376,11 +403,16 @@ export class PushObservability {
       byPeer.set(peerId, current);
     }
     return [...byPeer.values()]
+      .map((item) => {
+        item.reporterCount = item.distinctCounter.size;
+        delete item.distinctCounter;
+        return item;
+      })
       .sort((a, b) => b.reportCount - a.reportCount || String(b.lastReportAt).localeCompare(String(a.lastReportAt)))
       .slice(0, limit);
   }
 
-  async recordModerationAction({ reportId, action, note, actor, thresholds }) {
+  async recordModerationAction({ reportId, action, note, actor }) {
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
@@ -388,24 +420,20 @@ export class PushObservability {
         const current = await client.query('select * from moderation_reports where id = $1 for update', [reportId]);
         if (current.rows.length === 0) return null;
         const row = current.rows[0];
-        const status = moderationStatusForAction(action);
         const audit = Array.isArray(row.audit_history) ? row.audit_history : [];
         audit.push({ at: nowIso(), action, actor, note: note || null });
         const updated = await client.query(
           `update moderation_reports set
-             status = $2,
-             action = $3,
-             action_note = $4,
+             action = $2,
+             action_note = $3,
              action_at = now(),
-             audit_history = $5
+             audit_history = $4
            where id = $1
            returning *`,
-          [reportId, status, action, note || null, JSON.stringify(audit)],
+          [reportId, action, note || null, JSON.stringify(audit)],
         );
-        let score = await refreshModerationPeerScore(client, row.reported_peer_id, thresholds);
-        if (['warn', 'suspend', 'ban'].includes(action)) {
-          score = await setModerationPeerPolicy(client, row.reported_peer_id, action, thresholds);
-        }
+        let score = await refreshModerationPeerScore(client, row.reported_peer_id);
+        score = await setModerationPeerPolicy(client, row.reported_peer_id, action);
         await client.query('commit');
         return { report: mapModerationReport(updated.rows[0]), score };
       } catch (error) {
@@ -418,12 +446,54 @@ export class PushObservability {
 
     const report = this.moderationReports.get(reportId);
     if (!report) return null;
-    report.status = moderationStatusForAction(action);
     report.action = action;
     report.actionNote = note || null;
     report.actionAt = nowIso();
     report.auditHistory.push({ at: nowIso(), action, actor, note: note || null });
-    return { report, score: this.memoryModerationStatus(report.reportedPeerId, thresholds) };
+    return { report, score: this.recordMemoryPeerPolicy(report.reportedPeerId, action) };
+  }
+
+  async recordModerationPeerAction({ peerId, action, note, actor }) {
+    if (this.dbReady) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        const score = await setModerationPeerPolicy(client, peerId, action);
+        const audit = { at: nowIso(), action, actor, note: note || null };
+        await client.query(
+          `update moderation_reports set
+             action = $2,
+             action_note = $3,
+             action_at = now(),
+             audit_history = coalesce(audit_history, '[]'::jsonb) || $4::jsonb
+           where reported_peer_id = $1`,
+          [peerId, action, note || null, JSON.stringify([audit])],
+        );
+        await client.query('commit');
+        return score;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    return this.recordMemoryPeerPolicy(peerId, action);
+  }
+
+  recordMemoryPeerPolicy(peerId, action) {
+    const current = this.memoryModerationStatus(peerId);
+    const policyState = current.policyState === 'banned' || action === 'ban'
+      ? 'banned'
+      : 'warning';
+    const at = nowIso();
+    const next = {
+      policyState,
+      warningIssuedAt: current.warningIssuedAt || at,
+      bannedAt: policyState === 'banned' ? (current.bannedAt || at) : current.bannedAt,
+    };
+    this.moderationPeerPolicies.set(peerId, next);
+    return this.memoryModerationStatus(peerId);
   }
 
   async createModerationAppeal({ peerId, text }) {
@@ -435,20 +505,9 @@ export class PushObservability {
          returning *`,
         [appeal.id, peerId, text],
       );
-      await this.pool.query(
-        `update moderation_reports set status = 'appealed', appealed_at = now()
-         where reported_peer_id = $1 and status in ('pending', 'resolved')`,
-        [peerId],
-      );
       return mapModerationAppeal(result.rows[0]);
     }
     this.moderationAppeals.set(appeal.id, appeal);
-    for (const report of this.moderationReports.values()) {
-      if (report.reportedPeerId === peerId && ['pending', 'resolved'].includes(report.status)) {
-        report.status = 'appealed';
-        report.appealedAt = nowIso();
-      }
-    }
     return appeal;
   }
 
@@ -612,6 +671,7 @@ create table if not exists moderation_reports (
 create table if not exists moderation_peer_scores (
   peer_id text primary key,
   report_count integer not null default 0,
+  reporter_count integer not null default 0,
   pending_count integer not null default 0,
   processed_count integer not null default 0,
   appealed_count integer not null default 0,
@@ -621,6 +681,9 @@ create table if not exists moderation_peer_scores (
   last_report_at timestamptz,
   updated_at timestamptz not null default now()
 );
+
+alter table moderation_peer_scores
+  add column if not exists reporter_count integer not null default 0;
 
 create table if not exists moderation_appeals (
   id text primary key,

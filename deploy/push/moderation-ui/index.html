@@ -54,7 +54,7 @@
     button.warn { background: var(--warn); border-color: var(--warn); color: #fff; }
     .metrics {
       display: grid;
-      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
       gap: 12px;
     }
     .metric, section {
@@ -138,15 +138,6 @@
     <section>
       <div class="section-head">
         <h2>Incoming Reports</h2>
-        <div class="tools">
-          <select id="status">
-            <option value="pending">Pending</option>
-            <option value="all">All</option>
-            <option value="resolved">Resolved</option>
-            <option value="rejected">Rejected</option>
-            <option value="appealed">Appealed</option>
-          </select>
-        </div>
       </div>
       <div id="reports"></div>
     </section>
@@ -159,7 +150,6 @@
     const reportsEl = document.querySelector('#reports');
     const reportedPeersEl = document.querySelector('#reportedPeers');
     const reportersEl = document.querySelector('#reporters');
-    const statusEl = document.querySelector('#status');
 
     tokenInput.value = sessionStorage.getItem('moderationToken') || '';
 
@@ -209,10 +199,28 @@
       }[char]));
     }
 
-    function placeholderAction(peerId, action) {
-      console.info(`Placeholder ${action} for ${peerId}`);
+    function defaultDecisionNote(action, reportCount, reporterCount) {
+      const reports = Number(reportCount || 0);
+      const reporters = Number(reporterCount || 0);
+      if (action === 'ban') {
+        return `Account blocked because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`;
+      }
+      return `Warning issued because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`;
     }
-    window.placeholderAction = placeholderAction;
+
+    async function actPeer(peerId, action, reportCount, reporterCount) {
+      const defaultNote = defaultDecisionNote(action, reportCount, reporterCount);
+      const note = window.prompt('Moderator note', defaultNote);
+      if (note === null) return;
+      await postJson(`/admin/moderation/peers/${encodeURIComponent(peerId)}/action`, {
+        action,
+        note,
+        reportCount,
+        reporterCount,
+      });
+      await load();
+    }
+    window.actPeer = actPeer;
 
     function renderPeerAggregate(target, peers, emptyText) {
       if (!peers.length) {
@@ -221,17 +229,18 @@
       }
       target.innerHTML = `<table>
         <thead><tr>
-          <th>Peer ID</th><th>Total reports</th><th>Direct</th><th>Group</th><th>Last report</th><th>Decision</th>
+          <th>Peer ID</th><th>Total reports</th><th>Users</th><th>Direct</th><th>Group</th><th>Last report</th><th>Decision</th>
         </tr></thead>
         <tbody>${peers.map((peer) => `<tr>
           <td>${esc(peer.peerId)}</td>
           <td>${peer.reportCount}</td>
+          <td>${peer.reporterCount || 0}</td>
           <td>${peer.directCount}</td>
           <td>${peer.groupCount}</td>
           <td>${fmt(peer.lastReportAt)}</td>
           <td class="actions">
-            <button class="warn" type="button" disabled onclick="placeholderAction('${esc(peer.peerId)}', 'warn')">Warn</button>
-            <button class="danger" type="button" disabled onclick="placeholderAction('${esc(peer.peerId)}', 'ban')">Ban</button>
+            <button class="warn" type="button" onclick="actPeer('${esc(peer.peerId)}', 'warn', ${peer.reportCount || 0}, ${peer.reporterCount || 0})">Warn</button>
+            <button class="danger" type="button" onclick="actPeer('${esc(peer.peerId)}', 'ban', ${peer.reportCount || 0}, ${peer.reporterCount || 0})">Ban</button>
           </td>
         </tr>`).join('')}</tbody>
       </table>`;
@@ -244,7 +253,7 @@
       }
       reportsEl.innerHTML = `<table>
         <thead><tr>
-          <th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Status</th><th>Content</th>
+          <th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Content</th>
         </tr></thead>
         <tbody>${reports.map((report) => `<tr>
           <td>${fmt(report.receivedAt)}</td>
@@ -252,7 +261,6 @@
           <td>${esc(report.reporterPeerId)}</td>
           <td>${esc(report.reason)}</td>
           <td>${esc(report.type)}</td>
-          <td>${badge(report.status)}</td>
           <td>metadata only</td>
         </tr>`).join('')}</tbody>
       </table>`;
@@ -262,16 +270,13 @@
       try {
         const [summary, reports, reportedPeers, reporters] = await Promise.all([
           getJson('/admin/moderation/summary'),
-          getJson(`/admin/reports?status=${encodeURIComponent(statusEl.value)}`),
+          getJson('/admin/reports?limit=500'),
           getJson('/admin/moderation/reported-peers?limit=500'),
           getJson('/admin/moderation/reporters?limit=500'),
         ]);
         const s = summary.summary;
         metricsEl.innerHTML = [
           metric('Reports', s.total),
-          metric('Processed', s.processed),
-          metric('Remaining', s.remaining),
-          metric('Pending', s.pending),
           metric('Warnings', s.warned_peers),
           metric('Bans', s.banned_peers),
         ].join('');
@@ -291,7 +296,6 @@
       load();
     });
     document.querySelector('#refresh').addEventListener('click', load);
-    statusEl.addEventListener('change', load);
     load();
   </script>
 </body>

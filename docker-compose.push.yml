@@ -13,8 +13,7 @@ services:
       - PORT=4500
       - PUSH_API_TOKEN=${PUSH_API_TOKEN}
       - MODERATION_ADMIN_TOKEN=${MODERATION_ADMIN_TOKEN}
-      - MODERATION_WARNING_REPORT_THRESHOLD=${MODERATION_WARNING_REPORT_THRESHOLD:-10}
-      - MODERATION_BAN_REPORT_THRESHOLD=${MODERATION_BAN_REPORT_THRESHOLD:-20}
+      - MODERATION_STATUS_SIGNING_PRIVATE_KEY=${MODERATION_STATUS_SIGNING_PRIVATE_KEY}
       - FCM_PROJECT_ID=${FCM_PROJECT_ID}
       - FCM_CREDENTIALS_JSON=${FCM_CREDENTIALS_JSON}
       - APNS_TEAM_ID=${APNS_TEAM_ID}
@@ -43,7 +42,7 @@ services:
     build:
       context: .
       target: server-checker
-    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.1-2026082701}
+    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.2-2026082702}
     container_name: peerlink-server-checker
     restart: always
     depends_on:
