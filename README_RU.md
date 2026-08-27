@@ -121,8 +121,9 @@ Security-логика push разнесена по отдельным модул
 ```
 
 Скрипт подгружает `.env.push.local`, сбрасывает checkout на `origin/main`,
-делает `docker compose pull` для images из обновленного
-`docker-compose.push.yml`, затем `docker compose up -d --no-build`,
+делает `docker compose pull` для внешних images из обновленного
+`docker-compose.push.yml`, пересобирает локальные `push`/`server-checker`,
+затем `docker compose up -d --build`,
 перезапускает `push-proxy` и `moderation-ui`, чтобы nginx заново разрешил
 актуальные IP контейнеров, и показывает статус с последними логами
 `push`/`server-checker`.

@@ -66,8 +66,8 @@ main() {
   git checkout -B "$BRANCH" "$REMOTE/$BRANCH"
   git reset --hard "$REMOTE/$BRANCH"
 
-  compose pull "${RUNTIME_SERVICES[@]}"
-  compose up -d --no-build --remove-orphans "${RUNTIME_SERVICES[@]}"
+  compose pull push-proxy push-observability-db prometheus grafana moderation-ui certbot-renewer
+  compose up -d --build --remove-orphans "${RUNTIME_SERVICES[@]}"
   compose restart push-proxy moderation-ui
   compose ps
 

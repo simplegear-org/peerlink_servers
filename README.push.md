@@ -28,7 +28,7 @@ Public ports:
 
 ## Updating a Deployed Push Stack
 
-For servers that run GitHub-built images, apply an update with one command:
+For servers that keep this checkout on the host, apply an update with one command:
 
 ```bash
 ./update-push.sh
@@ -36,8 +36,8 @@ For servers that run GitHub-built images, apply an update with one command:
 
 The script loads `.env.push.local`, resets the local checkout to `origin/main`,
 pulls the images referenced by the updated
-`docker-compose.push.yml`, runs
-`docker compose up -d --no-build`, restarts `push-proxy` and `moderation-ui`
+`docker-compose.push.yml`, rebuilds local `push`/`server-checker` images, runs
+`docker compose up -d --build`, restarts `push-proxy` and `moderation-ui`
 so nginx resolves fresh upstream container IPs, shows container status and
 prints recent `push`/`server-checker` logs.
 
