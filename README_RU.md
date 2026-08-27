@@ -117,8 +117,10 @@ Security-логика push разнесена по отдельным модул
 
 Скрипт подгружает `.env.push.local`, сбрасывает checkout на `origin/main`,
 делает `docker compose pull` для images из обновленного
-`docker-compose.push.yml`, затем `docker compose up -d --no-build` и
-показывает статус с последними логами `push`/`server-checker`.
+`docker-compose.push.yml`, затем `docker compose up -d --no-build`,
+перезапускает `push-proxy` и `moderation-ui`, чтобы nginx заново разрешил
+актуальные IP контейнеров, и показывает статус с последними логами
+`push`/`server-checker`.
 
 Для write-endpoint’ов `push` используется relay-подобная Ed25519 проверка:
 - обязательные поля: `id`, `from`, `ts`, `sig`, `signingPub`

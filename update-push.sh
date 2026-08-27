@@ -68,6 +68,7 @@ main() {
 
   compose pull "${RUNTIME_SERVICES[@]}"
   compose up -d --no-build --remove-orphans "${RUNTIME_SERVICES[@]}"
+  compose restart push-proxy moderation-ui
   compose ps
 
   echo

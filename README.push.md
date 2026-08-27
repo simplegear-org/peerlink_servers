@@ -37,8 +37,9 @@ For servers that run GitHub-built images, apply an update with one command:
 The script loads `.env.push.local`, resets the local checkout to `origin/main`,
 pulls the images referenced by the updated
 `docker-compose.push.yml`, runs
-`docker compose up -d --no-build`, shows container status and prints recent
-`push`/`server-checker` logs.
+`docker compose up -d --no-build`, restarts `push-proxy` and `moderation-ui`
+so nginx resolves fresh upstream container IPs, shows container status and
+prints recent `push`/`server-checker` logs.
 
 ## Endpoints
 

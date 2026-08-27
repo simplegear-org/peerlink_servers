@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PeerLink X Moderation</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #667085;
+      --line: #d9dde5;
+      --accent: #1f7a5b;
+      --warn: #b7791f;
+      --danger: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    main { padding: 20px 24px 28px; display: grid; gap: 18px; }
+    .token { display: flex; gap: 8px; align-items: center; min-width: min(520px, 100%); }
+    input, select, textarea, button {
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+    }
+    input, select, textarea { padding: 8px 10px; }
+    input { width: 100%; }
+    button {
+      padding: 8px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    button.warn { background: var(--warn); border-color: var(--warn); color: #fff; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 12px;
+    }
+    .metric, section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric { padding: 14px; }
+    .metric span { display: block; color: var(--muted); font-size: 12px; }
+    .metric strong { display: block; margin-top: 6px; font-size: 26px; }
+    section { overflow: hidden; }
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .section-head h2 { margin: 0; font-size: 15px; }
+    .tools { display: flex; gap: 8px; align-items: center; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    th { color: var(--muted); font-weight: 600; background: #fafbfc; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge {
+      display: inline-block;
+      min-width: 64px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #edf2f7;
+      text-align: center;
+      font-size: 12px;
+    }
+    .badge.warning { color: var(--warn); background: #fff7e6; }
+    .badge.banned { color: var(--danger); background: #fff1f0; }
+    .empty, .error { padding: 16px; color: var(--muted); }
+    .error { color: var(--danger); }
+    @media (max-width: 920px) {
+      header { align-items: stretch; flex-direction: column; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      table { min-width: 860px; }
+      section { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PeerLink X Moderation</h1>
+    <div class="token">
+      <input id="token" type="password" placeholder="Moderator token">
+      <button id="saveToken" class="primary" type="button">Save</button>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <div class="metrics" id="metrics"></div>
+
+    <section>
+      <div class="section-head">
+        <h2>Reported Users</h2>
+      </div>
+      <div id="reportedPeers"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Reporters</h2>
+      </div>
+      <div id="reporters"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Incoming Reports</h2>
+        <div class="tools">
+          <select id="status">
+            <option value="pending">Pending</option>
+            <option value="all">All</option>
+            <option value="resolved">Resolved</option>
+            <option value="rejected">Rejected</option>
+            <option value="appealed">Appealed</option>
+          </select>
+        </div>
+      </div>
+      <div id="reports"></div>
+    </section>
+  </main>
+
+  <script>
+    const apiBase = '/api';
+    const tokenInput = document.querySelector('#token');
+    const metricsEl = document.querySelector('#metrics');
+    const reportsEl = document.querySelector('#reports');
+    const reportedPeersEl = document.querySelector('#reportedPeers');
+    const reportersEl = document.querySelector('#reporters');
+    const statusEl = document.querySelector('#status');
+
+    tokenInput.value = sessionStorage.getItem('moderationToken') || '';
+
+    function authHeaders() {
+      const token = tokenInput.value.trim();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    }
+
+    async function getJson(path) {
+      const res = await fetch(`${apiBase}${path}`, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    async function postJson(path, body) {
+      const res = await fetch(`${apiBase}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function metric(label, value) {
+      return `<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`;
+    }
+
+    function badge(value) {
+      const cls = value === 'banned' ? 'banned' : value === 'warning' ? 'warning' : '';
+      return `<span class="badge ${cls}">${value || 'clear'}</span>`;
+    }
+
+    function fmt(value) {
+      return value ? new Date(value).toLocaleString() : '-';
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      }[char]));
+    }
+
+    function placeholderAction(peerId, action) {
+      console.info(`Placeholder ${action} for ${peerId}`);
+    }
+    window.placeholderAction = placeholderAction;
+
+    function renderPeerAggregate(target, peers, emptyText) {
+      if (!peers.length) {
+        target.innerHTML = `<div class="empty">${emptyText}</div>`;
+        return;
+      }
+      target.innerHTML = `<table>
+        <thead><tr>
+          <th>Peer ID</th><th>Total reports</th><th>Direct</th><th>Group</th><th>Last report</th><th>Decision</th>
+        </tr></thead>
+        <tbody>${peers.map((peer) => `<tr>
+          <td>${esc(peer.peerId)}</td>
+          <td>${peer.reportCount}</td>
+          <td>${peer.directCount}</td>
+          <td>${peer.groupCount}</td>
+          <td>${fmt(peer.lastReportAt)}</td>
+          <td class="actions">
+            <button class="warn" type="button" disabled onclick="placeholderAction('${esc(peer.peerId)}', 'warn')">Warn</button>
+            <button class="danger" type="button" disabled onclick="placeholderAction('${esc(peer.peerId)}', 'ban')">Ban</button>
+          </td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    }
+
+    function renderReports(reports) {
+      if (!reports.length) {
+        reportsEl.innerHTML = '<div class="empty">No reports</div>';
+        return;
+      }
+      reportsEl.innerHTML = `<table>
+        <thead><tr>
+          <th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Status</th><th>Content</th>
+        </tr></thead>
+        <tbody>${reports.map((report) => `<tr>
+          <td>${fmt(report.receivedAt)}</td>
+          <td>${esc(report.reportedPeerId)}</td>
+          <td>${esc(report.reporterPeerId)}</td>
+          <td>${esc(report.reason)}</td>
+          <td>${esc(report.type)}</td>
+          <td>${badge(report.status)}</td>
+          <td>metadata only</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    }
+
+    async function load() {
+      try {
+        const [summary, reports, reportedPeers, reporters] = await Promise.all([
+          getJson('/admin/moderation/summary'),
+          getJson(`/admin/reports?status=${encodeURIComponent(statusEl.value)}`),
+          getJson('/admin/moderation/reported-peers?limit=500'),
+          getJson('/admin/moderation/reporters?limit=500'),
+        ]);
+        const s = summary.summary;
+        metricsEl.innerHTML = [
+          metric('Reports', s.total),
+          metric('Processed', s.processed),
+          metric('Remaining', s.remaining),
+          metric('Pending', s.pending),
+          metric('Warnings', s.warned_peers),
+          metric('Bans', s.banned_peers),
+        ].join('');
+        renderPeerAggregate(reportedPeersEl, reportedPeers.peers || [], 'No reported users');
+        renderPeerAggregate(reportersEl, reporters.peers || [], 'No reporters');
+        renderReports(reports.reports || []);
+      } catch (error) {
+        metricsEl.innerHTML = '';
+        reportedPeersEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+        reportersEl.innerHTML = '';
+        reportsEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+      }
+    }
+
+    document.querySelector('#saveToken').addEventListener('click', () => {
+      sessionStorage.setItem('moderationToken', tokenInput.value.trim());
+      load();
+    });
+    document.querySelector('#refresh').addEventListener('click', load);
+    statusEl.addEventListener('change', load);
+    load();
+  </script>
+</body>
+</html>

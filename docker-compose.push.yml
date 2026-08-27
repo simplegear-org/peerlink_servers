@@ -43,7 +43,7 @@ services:
     build:
       context: .
       target: server-checker
-    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.0-2026082607}
+    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.4.1-2026082701}
     container_name: peerlink-server-checker
     restart: always
     depends_on:
