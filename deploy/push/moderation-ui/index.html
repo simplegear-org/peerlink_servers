@@ -130,6 +130,13 @@
 
     <section>
       <div class="section-head">
+        <h2>Appeals</h2>
+      </div>
+      <div id="appeals"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
         <h2>Reporters</h2>
       </div>
       <div id="reporters"></div>
@@ -150,6 +157,7 @@
     const reportsEl = document.querySelector('#reports');
     const reportedPeersEl = document.querySelector('#reportedPeers');
     const reportersEl = document.querySelector('#reporters');
+    const appealsEl = document.querySelector('#appeals');
 
     tokenInput.value = sessionStorage.getItem('moderationToken') || '';
 
@@ -222,6 +230,14 @@
     }
     window.actPeer = actPeer;
 
+    async function unbanAppeal(appealId, peerId) {
+      const note = window.prompt('Unban note', `Appeal accepted. Account ${peerId} is unblocked.`);
+      if (note === null) return;
+      await postJson(`/admin/moderation/appeals/${encodeURIComponent(appealId)}/unban`, { note });
+      await load();
+    }
+    window.unbanAppeal = unbanAppeal;
+
     function renderPeerAggregate(target, peers, emptyText) {
       if (!peers.length) {
         target.innerHTML = `<div class="empty">${emptyText}</div>`;
@@ -266,13 +282,38 @@
       </table>`;
     }
 
+    function renderAppeals(appeals) {
+      if (!appeals.length) {
+        appealsEl.innerHTML = '<div class="empty">No appeals</div>';
+        return;
+      }
+      appealsEl.innerHTML = `<table>
+        <thead><tr>
+          <th>Created</th><th>Peer ID</th><th>Status</th><th>Appeal</th><th>Resolved</th><th>Decision</th>
+        </tr></thead>
+        <tbody>${appeals.map((appeal) => `<tr>
+          <td>${fmt(appeal.createdAt)}</td>
+          <td>${esc(appeal.peerId)}</td>
+          <td>${esc(appeal.status)}</td>
+          <td>${esc(appeal.text)}</td>
+          <td>${fmt(appeal.resolvedAt)}</td>
+          <td class="actions">
+            ${appeal.status === 'open'
+              ? `<button class="primary" type="button" onclick="unbanAppeal('${esc(appeal.id)}', '${esc(appeal.peerId)}')">Unban</button>`
+              : esc(appeal.resolutionAction || '-')}
+          </td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    }
+
     async function load() {
       try {
-        const [summary, reports, reportedPeers, reporters] = await Promise.all([
+        const [summary, reports, reportedPeers, reporters, appeals] = await Promise.all([
           getJson('/admin/moderation/summary'),
           getJson('/admin/reports?limit=500'),
           getJson('/admin/moderation/reported-peers?limit=500'),
           getJson('/admin/moderation/reporters?limit=500'),
+          getJson('/admin/moderation/appeals?status=all&limit=500'),
         ]);
         const s = summary.summary;
         metricsEl.innerHTML = [
@@ -281,11 +322,13 @@
           metric('Bans', s.banned_peers),
         ].join('');
         renderPeerAggregate(reportedPeersEl, reportedPeers.peers || [], 'No reported users');
+        renderAppeals(appeals.appeals || []);
         renderPeerAggregate(reportersEl, reporters.peers || [], 'No reporters');
         renderReports(reports.reports || []);
       } catch (error) {
         metricsEl.innerHTML = '';
         reportedPeersEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+        appealsEl.innerHTML = '';
         reportersEl.innerHTML = '';
         reportsEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
       }

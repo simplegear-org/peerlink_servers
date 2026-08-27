@@ -80,9 +80,9 @@ HTTP-сервис, который хранит токены устройств �
 - обычные события/уведомления через FCM и APNs alert
 - входящие звонки через data-only FCM и APNs VoIP (канал выбирает сервер)
 - metadata-only moderation reports, appeals и ручной peer policy status для UGC/moderation flow
-- banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban` принимает только модератор
-- при ручном `warning`/`ban` push best-effort отправляет пользователю `moderation_policy`; payload содержит `messageKey`, `reportCount` и `reporterCount`, а клиент показывает текст на локали пользователя
-- Moderator UI предзаполняет note причиной с количеством жалоб и числом уникальных жалобщиков без раскрытия их Peer ID; клиент при `banned` локально закрывает коммуникационный UI и оставляет appeal
+- banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban`/`unban` принимает только модератор
+- при ручном `warning`/`ban` push best-effort отправляет пользователю data-only `moderation_policy`; payload содержит `messageKey`, `reportCount` и `reporterCount`, а клиент показывает текст на локали пользователя
+- Moderator UI предзаполняет note причиной с количеством жалоб и числом уникальных жалобщиков без раскрытия их Peer ID; отдельный блок `Appeals` позволяет принять апелляцию через `Unban`
 - `GET /moderation/status` возвращает `signedStatus`, если задан `MODERATION_STATUS_SIGNING_PRIVATE_KEY`
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
@@ -93,7 +93,8 @@ HTTP-сервис, который хранит токены устройств �
 - `POST /moderation/reports` — прием жалоб
 - `GET /moderation/status` — текущий moderation score/status по `peerId`
 - `POST /moderation/appeals` — прием апелляций
-- `GET /admin/reports`, `POST /admin/reports/:id/action`, `POST /admin/moderation/peers/:peerId/action` — metadata-only очередь и ручные действия `warn`/`ban`
+- `GET /admin/reports`, `POST /admin/reports/:id/action`, `POST /admin/moderation/peers/:peerId/action` — metadata-only очередь и ручные действия `warn`/`ban`/`unban`
+- `GET /admin/moderation/appeals`, `POST /admin/moderation/appeals/:id/unban` — очередь апелляций и разблокировка пользователя
 - `GET /admin/moderation/reported-peers` — агрегат пользователей, на которых пожаловались: всего/direct/group
 - `GET /admin/moderation/reporters` — агрегат пользователей, которые жалуются: всего/direct/group
 - `GET /health` — статус конфигурации FCM и защитных механизмов

@@ -48,6 +48,20 @@ export async function refreshModerationPeerScore(client, peerId) {
 }
 
 export async function setModerationPeerPolicy(client, peerId, action) {
+  if (action === 'unban') {
+    await refreshModerationPeerScore(client, peerId);
+    const result = await client.query(
+      `update moderation_peer_scores set
+         policy_state = 'clear',
+         warning_issued_at = null,
+         banned_at = null,
+         updated_at = now()
+       where peer_id = $1
+       returning *`,
+      [peerId],
+    );
+    return mapModerationScore(result.rows[0]);
+  }
   const policyState = action === 'ban' ? 'banned' : 'warning';
   await refreshModerationPeerScore(client, peerId);
   const result = await client.query(
@@ -147,6 +161,9 @@ export function mapModerationAppeal(row) {
     status: row.status,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
+    resolutionAction: row.resolution_action,
+    resolutionNote: row.resolution_note,
+    resolvedBy: row.resolved_by,
   };
 }
 

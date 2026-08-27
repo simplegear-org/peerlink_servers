@@ -154,6 +154,10 @@ write_moderation_ui_index() {
       <div id="reports"></div>
     </section>
     <section>
+      <div class="section-head"><h2>Appeals</h2></div>
+      <div id="appeals"></div>
+    </section>
+    <section>
       <div class="section-head"><h2>Peer Scores</h2><select id="sort"><option value="report_count_desc">Reports</option><option value="state_desc">Policy</option><option value="last_report_desc">Last report</option></select></div>
       <div id="scores"></div>
     </section>
@@ -163,6 +167,7 @@ write_moderation_ui_index() {
     const tokenInput = document.querySelector('#token');
     const metricsEl = document.querySelector('#metrics');
     const reportsEl = document.querySelector('#reports');
+    const appealsEl = document.querySelector('#appeals');
     const scoresEl = document.querySelector('#scores');
     const sortEl = document.querySelector('#sort');
     tokenInput.value = sessionStorage.getItem('moderationToken') || '';
@@ -176,9 +181,15 @@ write_moderation_ui_index() {
     function defaultDecisionNote(action, reportCount, reporterCount) { const reports = Number(reportCount || 0); const reporters = Number(reporterCount || 0); return action === 'ban' ? `Account blocked because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.` : `Warning issued because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`; }
     async function actPeer(peerId, action, reportCount, reporterCount) { const note = window.prompt('Moderator note', defaultDecisionNote(action, reportCount, reporterCount)); if (note === null) return; await postJson(`/admin/moderation/peers/${encodeURIComponent(peerId)}/action`, { action, note, reportCount, reporterCount }); await load(); }
     window.actPeer = actPeer;
+    async function unbanAppeal(appealId, peerId) { const note = window.prompt('Unban note', `Appeal accepted. Account ${peerId} is unblocked.`); if (note === null) return; await postJson(`/admin/moderation/appeals/${encodeURIComponent(appealId)}/unban`, { note }); await load(); }
+    window.unbanAppeal = unbanAppeal;
     function renderReports(reports) {
       if (!reports.length) { reportsEl.innerHTML = '<div class="empty">No reports</div>'; return; }
       reportsEl.innerHTML = `<table><thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Content</th></tr></thead><tbody>${reports.map((report) => `<tr><td>${fmt(report.receivedAt)}</td><td>${esc(report.reportedPeerId)}</td><td>${esc(report.reporterPeerId)}</td><td>${esc(report.reason)}</td><td>metadata only</td></tr>`).join('')}</tbody></table>`;
+    }
+    function renderAppeals(appeals) {
+      if (!appeals.length) { appealsEl.innerHTML = '<div class="empty">No appeals</div>'; return; }
+      appealsEl.innerHTML = `<table><thead><tr><th>Created</th><th>Peer ID</th><th>Status</th><th>Appeal</th><th>Resolved</th><th>Decision</th></tr></thead><tbody>${appeals.map((appeal) => `<tr><td>${fmt(appeal.createdAt)}</td><td>${esc(appeal.peerId)}</td><td>${esc(appeal.status)}</td><td>${esc(appeal.text)}</td><td>${fmt(appeal.resolvedAt)}</td><td class="actions">${appeal.status === 'open' ? `<button class="primary" onclick="unbanAppeal('${esc(appeal.id)}', '${esc(appeal.peerId)}')">Unban</button>` : esc(appeal.resolutionAction || '-')}</td></tr>`).join('')}</tbody></table>`;
     }
     function renderScores(scores) {
       if (!scores.length) { scoresEl.innerHTML = '<div class="empty">No peer reports</div>'; return; }
@@ -186,14 +197,16 @@ write_moderation_ui_index() {
     }
     async function load() {
       try {
-        const [summary, reports, scores] = await Promise.all([getJson('/admin/moderation/summary'), getJson('/admin/reports?limit=500'), getJson(`/admin/moderation/peer-scores?sort=${encodeURIComponent(sortEl.value)}`)]);
+        const [summary, reports, appeals, scores] = await Promise.all([getJson('/admin/moderation/summary'), getJson('/admin/reports?limit=500'), getJson('/admin/moderation/appeals?status=all&limit=500'), getJson(`/admin/moderation/peer-scores?sort=${encodeURIComponent(sortEl.value)}`)]);
         const s = summary.summary;
         metricsEl.innerHTML = [metric('Reports', s.total), metric('Warnings', s.warned_peers), metric('Bans', s.banned_peers)].join('');
         renderReports(reports.reports || []);
+        renderAppeals(appeals.appeals || []);
         renderScores(scores.scores || []);
       } catch (error) {
         metricsEl.innerHTML = '';
         reportsEl.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+        appealsEl.innerHTML = '';
         scoresEl.innerHTML = '';
       }
     }

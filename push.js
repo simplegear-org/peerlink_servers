@@ -165,7 +165,9 @@ function createModerationPolicyNotifier({
     const reporterCount = Number(score.reporterCount || 0);
     const messageKey = policyState === 'banned'
       ? 'moderationBanMessage'
-      : 'moderationWarningMessage';
+      : policyState === 'warning'
+        ? 'moderationWarningMessage'
+        : 'moderationUnbanMessage';
     const payload = {
       type: 'moderation_policy',
       peerId,
@@ -176,7 +178,9 @@ function createModerationPolicyNotifier({
       reporterCount: String(reporterCount),
       message: policyState === 'banned'
         ? `Your PeerLink X account has been blocked after ${reportCount} reports from ${reporterCount} users. You can submit an appeal in the app.`
-        : `Your PeerLink X account received ${reportCount} reports from ${reporterCount} users and may be blocked if more reports are received.`,
+        : policyState === 'warning'
+          ? `Your PeerLink X account received ${reportCount} reports from ${reporterCount} users and may be blocked if more reports are received.`
+          : 'Your PeerLink X account has been unblocked.',
       ...(note ? { moderatorNote: note } : {}),
       ...(signedStatus ? { signedStatus } : {}),
     };
@@ -369,7 +373,7 @@ function normalizeModerationStatus(value) {
 
 function normalizeModerationAction(value) {
   const action = normalizeStringValue(value, 32)?.toLowerCase();
-  return ['warn', 'ban'].includes(action) ? action : null;
+  return ['warn', 'ban', 'unban'].includes(action) ? action : null;
 }
 
 function normalizeDeviceId(value) {

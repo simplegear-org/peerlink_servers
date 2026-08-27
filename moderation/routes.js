@@ -97,6 +97,44 @@ export function registerModerationRoutes({
     }
   });
 
+  app.get('/admin/moderation/appeals', requireAdminAuth, async (req, res) => {
+    const status = normalizeStringValue(req.query.status, 32) || 'open';
+    const normalizedStatus = status === 'all' ? 'all' : status;
+    const limit = Math.min(500, positiveInt(req.query.limit, 100));
+    try {
+      const appeals = await observability.listModerationAppeals({ status: normalizedStatus, limit });
+      return res.json({ ok: true, appeals });
+    } catch (error) {
+      console.warn('[push][moderation] appeals failed:', error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ error: 'moderation_storage_unavailable' });
+    }
+  });
+
+  app.post('/admin/moderation/appeals/:id/unban', requireAdminAuth, async (req, res) => {
+    const appealId = normalizeStringValue(req.params.id, 256);
+    const note = normalizeStringValue(req.body?.note, 2048) || '';
+    if (!appealId) {
+      return res.status(400).json({ error: 'invalid_appeal' });
+    }
+    try {
+      const result = await observability.resolveModerationAppealWithUnban({
+        appealId,
+        note,
+        actor: 'moderator',
+      });
+      if (!result) {
+        return res.status(404).json({ error: 'appeal_not_found' });
+      }
+      const delivery = notifyModerationPolicy
+        ? await notifyModerationPolicy({ score: result.score, action: 'unban', note })
+        : null;
+      return res.json({ ok: true, ...result, delivery });
+    } catch (error) {
+      console.warn('[push][moderation] appeal unban failed:', error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ error: 'moderation_storage_unavailable' });
+    }
+  });
+
   app.get('/admin/reports', requireAdminAuth, async (req, res) => {
     const status = normalizeModerationStatus(req.query.status);
     const reportedPeerId = normalizePeerId(req.query.reportedPeerId);

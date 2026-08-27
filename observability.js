@@ -418,7 +418,10 @@ export class PushObservability {
       try {
         await client.query('begin');
         const current = await client.query('select * from moderation_reports where id = $1 for update', [reportId]);
-        if (current.rows.length === 0) return null;
+        if (current.rows.length === 0) {
+          await client.query('rollback');
+          return null;
+        }
         const row = current.rows[0];
         const audit = Array.isArray(row.audit_history) ? row.audit_history : [];
         audit.push({ at: nowIso(), action, actor, note: note || null });
@@ -483,6 +486,15 @@ export class PushObservability {
 
   recordMemoryPeerPolicy(peerId, action) {
     const current = this.memoryModerationStatus(peerId);
+    if (action === 'unban') {
+      const next = {
+        policyState: 'clear',
+        warningIssuedAt: null,
+        bannedAt: null,
+      };
+      this.moderationPeerPolicies.set(peerId, next);
+      return this.memoryModerationStatus(peerId);
+    }
     const policyState = current.policyState === 'banned' || action === 'ban'
       ? 'banned'
       : 'warning';
@@ -509,6 +521,66 @@ export class PushObservability {
     }
     this.moderationAppeals.set(appeal.id, appeal);
     return appeal;
+  }
+
+  async listModerationAppeals({ status = 'open', limit = 100 } = {}) {
+    if (this.dbReady) {
+      const values = [];
+      const where = status && status !== 'all' ? 'where status = $1' : '';
+      if (where) values.push(status);
+      values.push(limit);
+      const result = await this.pool.query(
+        `select * from moderation_appeals ${where} order by created_at desc limit $${values.length}`,
+        values,
+      );
+      return result.rows.map(mapModerationAppeal);
+    }
+    return [...this.moderationAppeals.values()]
+      .filter((appeal) => status === 'all' || appeal.status === status)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, limit);
+  }
+
+  async resolveModerationAppealWithUnban({ appealId, note, actor }) {
+    if (this.dbReady) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        const current = await client.query('select * from moderation_appeals where id = $1 for update', [appealId]);
+        if (current.rows.length === 0) {
+          await client.query('rollback');
+          return null;
+        }
+        const appealRow = current.rows[0];
+        const score = await setModerationPeerPolicy(client, appealRow.peer_id, 'unban');
+        const updated = await client.query(
+          `update moderation_appeals set
+             status = 'accepted',
+             resolved_at = now(),
+             resolution_action = 'unban',
+             resolution_note = $2,
+             resolved_by = $3
+           where id = $1
+           returning *`,
+          [appealId, note || null, actor || null],
+        );
+        await client.query('commit');
+        return { appeal: mapModerationAppeal(updated.rows[0]), score };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    const appeal = this.moderationAppeals.get(appealId);
+    if (!appeal) return null;
+    appeal.status = 'accepted';
+    appeal.resolvedAt = nowIso();
+    appeal.resolutionAction = 'unban';
+    appeal.resolutionNote = note || null;
+    appeal.resolvedBy = actor || null;
+    return { appeal, score: this.recordMemoryPeerPolicy(appeal.peerId, 'unban') };
   }
 
   async persistObservedServers({ servers, eventType }) {
@@ -691,8 +763,16 @@ create table if not exists moderation_appeals (
   text text not null,
   status text not null default 'open',
   created_at timestamptz not null default now(),
-  resolved_at timestamptz
+  resolved_at timestamptz,
+  resolution_action text,
+  resolution_note text,
+  resolved_by text
 );
+
+alter table moderation_appeals
+  add column if not exists resolution_action text,
+  add column if not exists resolution_note text,
+  add column if not exists resolved_by text;
 
 create table if not exists peer_identity_bindings (
   peer_id text primary key,

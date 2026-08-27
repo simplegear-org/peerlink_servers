@@ -208,15 +208,19 @@ If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 - `GET /admin/moderation/reported-peers` — aggregate list of users who were reported, with total/direct/group report counts
 - `GET /admin/moderation/reporters` — aggregate list of users who filed reports, with total/direct/group report counts
 - `GET /admin/moderation/peer-scores?sort=report_count_desc|state_desc|last_report_desc` — sortable peer score list
-- `POST /admin/reports/:id/action` — applies `warn` or `ban` to the reported peer
-- `POST /admin/moderation/peers/:peerId/action` — applies `warn` or `ban` directly to a peer
+- `GET /admin/moderation/appeals?status=open|all` — appeal queue for moderator UI
+- `POST /admin/moderation/appeals/:id/unban` — accepts an appeal and clears the peer policy
+- `POST /admin/reports/:id/action` — applies `warn`, `ban`, or `unban` to the reported peer
+- `POST /admin/moderation/peers/:peerId/action` — applies `warn`, `ban`, or `unban` directly to a peer
 
-Manual `warn`/`ban` actions send a best-effort `moderation_policy` push to the
+Manual `warn`/`ban`/`unban` actions send a best-effort `moderation_policy` push to the
 target peer. The moderator UI pre-fills the note with the current report count
 and unique reporter count without exposing reporter Peer IDs. The push payload
 includes `messageKey`, `reportCount`, and `reporterCount`; the app renders the
-warning/ban text using the user's locale. `ban` is persisted locally and used to
-block communication UI while keeping `POST /moderation/appeals` available.
+warning/ban text using the user's locale. Moderation policy pushes are data-only
+so the server does not have to guess the user's locale. `ban` is persisted
+locally; after an appeal is submitted the app can be viewed, but outgoing
+messages and calls stay blocked until `unban`.
 
 ## Security
 
