@@ -34,8 +34,8 @@ For servers that run GitHub-built images, apply an update with one command:
 ./update-push.sh
 ```
 
-The script loads `.env.push.local`, fast-forwards the local checkout from
-`origin/main`, pulls the images referenced by the updated
+The script loads `.env.push.local`, resets the local checkout to `origin/main`,
+pulls the images referenced by the updated
 `docker-compose.push.yml`, runs
 `docker compose up -d --no-build`, shows container status and prints recent
 `push`/`server-checker` logs.

@@ -63,8 +63,8 @@ main() {
   validate_env
 
   git fetch "$REMOTE" "$BRANCH"
-  git checkout "$BRANCH"
-  git pull --ff-only "$REMOTE" "$BRANCH"
+  git checkout -B "$BRANCH" "$REMOTE/$BRANCH"
+  git reset --hard "$REMOTE/$BRANCH"
 
   compose pull "${RUNTIME_SERVICES[@]}"
   compose up -d --no-build --remove-orphans "${RUNTIME_SERVICES[@]}"

@@ -115,7 +115,7 @@ Security-логика push разнесена по отдельным модул
 ./update-push.sh
 ```
 
-Скрипт подгружает `.env.push.local`, обновляет checkout из `origin/main`,
+Скрипт подгружает `.env.push.local`, сбрасывает checkout на `origin/main`,
 делает `docker compose pull` для images из обновленного
 `docker-compose.push.yml`, затем `docker compose up -d --no-build` и
 показывает статус с последними логами `push`/`server-checker`.
