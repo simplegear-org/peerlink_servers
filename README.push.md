@@ -141,9 +141,12 @@ Fanout behavior:
 - For `direct_update` and `group_update`, APNs alert payloads include
   `mutable-content: 1` so the iOS Notification Service Extension can apply
   local blocked-peer filtering before presentation.
-- For `direct_update` and `group_update`, FCM delivery is data-only with Android
-  high priority; the Android client decides local notification presentation
-  after applying local blocked-peer filtering.
+- For `direct_update` and `group_update` to Android targets, FCM delivery is
+  data-only with high priority; the Android client decides local notification
+  presentation after applying local blocked-peer filtering.
+- For `direct_update` and `group_update` to non-Android FCM targets, FCM keeps
+  the notification payload and includes APNs `mutable-content: 1` metadata for
+  iOS-compatible delivery.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:

@@ -48,7 +48,7 @@ export function createPushProviders({
     }
   }
 
-  async function sendFcm({ token, data, notification, android }) {
+  async function sendFcm({ token, data, notification, android, apns }) {
     const auth = getGoogleAuthClient();
     const accessToken = await auth.getAccessToken();
     if (!accessToken) {
@@ -76,6 +76,7 @@ export function createPushProviders({
               ...(typeof notification.title === 'string' ? { title: notification.title } : {}),
               ...(typeof notification.body === 'string' ? { body: notification.body } : {}),
             },
+            ...(apns?.mutableContent ? { 'mutable-content': 1 } : {}),
           },
         },
       };

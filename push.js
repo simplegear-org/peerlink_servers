@@ -812,6 +812,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
     try {
       const hasNotificationText = Boolean(notification?.title || notification?.body);
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
+      const isAndroidTarget = (target.platform || '').toLowerCase() === 'android';
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       if (provider === 'apns') {
         const apnsTopic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
@@ -843,15 +844,22 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       } else {
         await pushProviders.sendFcm({
           token: target.token,
-          ...(hasNotificationText && !isMessageUpdate
+          ...(hasNotificationText && (!isMessageUpdate || !isAndroidTarget)
             ? {
                 notification: {
                   ...(notification?.title ? { title: notification.title } : {}),
                   ...(notification?.body ? { body: notification.body } : {}),
                 },
+                ...(isMessageUpdate
+                  ? {
+                      apns: {
+                        mutableContent: true,
+                      },
+                    }
+                  : {}),
               }
             : {}),
-          ...(!hasNotificationText || isMessageUpdate
+          ...(!hasNotificationText || (isMessageUpdate && isAndroidTarget)
             ? {
                 android: {
                   priority: 'HIGH',
