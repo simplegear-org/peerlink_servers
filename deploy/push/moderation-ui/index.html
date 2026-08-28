@@ -17,6 +17,7 @@
       --accent-2: #58a6ff;
       --warn: #d29922;
       --danger: #f85149;
+      --danger-strong: #da3633;
       --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
     }
     * { box-sizing: border-box; }
@@ -41,8 +42,8 @@
       backdrop-filter: blur(12px);
     }
     h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
-    main { width: min(1440px, 100%); margin: 0 auto; padding: 20px 24px 28px; }
-    input, button {
+    main { width: min(1320px, 100%); margin: 0 auto; padding: 20px 24px 28px; }
+    input, textarea, button {
       height: 38px;
       font: inherit;
       border: 1px solid var(--line);
@@ -51,7 +52,15 @@
       color: var(--text);
     }
     input { width: 100%; padding: 0 12px; outline: none; }
-    input:focus { border-color: var(--accent-2); }
+    textarea {
+      width: 100%;
+      min-height: 132px;
+      padding: 12px;
+      resize: vertical;
+      outline: none;
+      line-height: 1.45;
+    }
+    input:focus, textarea:focus { border-color: var(--accent-2); }
     button {
       padding: 0 13px;
       cursor: pointer;
@@ -63,6 +72,7 @@
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     button.warn { background: rgba(210, 153, 34, 0.16); border-color: rgba(210, 153, 34, 0.55); color: #f0c36a; }
     button.danger { background: rgba(248, 81, 73, 0.16); border-color: rgba(248, 81, 73, 0.62); color: #ff938a; }
+    button.danger.confirm { background: var(--danger-strong); border-color: var(--danger-strong); color: #fff; }
     button.ghost { background: transparent; }
     button[disabled] { cursor: default; opacity: 0.45; transform: none; }
     .token { display: grid; grid-template-columns: minmax(220px, 420px) auto auto; gap: 8px; align-items: center; }
@@ -72,7 +82,7 @@
       gap: 12px;
       margin-bottom: 16px;
     }
-    .metric, .workspace {
+    .metric, .workspace, .dialog {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -109,7 +119,11 @@
     .view-title h2 { margin: 0; font-size: 15px; line-height: 1.25; }
     .view-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 900px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 860px; }
+    .col-date { width: 160px; }
+    .col-peer { width: 190px; }
+    .col-small { width: 86px; }
+    .col-actions { width: 168px; }
     th, td {
       padding: 11px 12px;
       border-bottom: 1px solid var(--line);
@@ -125,6 +139,20 @@
     }
     tr:hover td { background: rgba(88, 166, 255, 0.04); }
     .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .peer-id {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 4px 7px;
+      border: 1px solid rgba(139, 148, 158, 0.22);
+      border-radius: 6px;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
     .badge {
       display: inline-block;
       min-width: 68px;
@@ -150,12 +178,44 @@
       font-size: 13px;
     }
     .pager strong { color: var(--text); font-weight: 600; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(1, 4, 9, 0.72);
+      backdrop-filter: blur(8px);
+    }
+    .modal-backdrop.open { display: flex; }
+    .dialog {
+      width: min(560px, 100%);
+      overflow: hidden;
+    }
+    .dialog-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .dialog-head h2 { margin: 0; font-size: 16px; line-height: 1.25; }
+    .dialog-head p { margin: 6px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .dialog-body { padding: 16px 18px; }
+    .dialog-foot {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      padding: 14px 18px;
+      border-top: 1px solid var(--line);
+      background: #111820;
+    }
     @media (max-width: 920px) {
       header { align-items: stretch; flex-direction: column; }
       .token { grid-template-columns: 1fr auto auto; }
       main { padding: 14px; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .view-head { align-items: flex-start; flex-direction: column; }
+      table { min-width: 760px; }
     }
     @media (max-width: 560px) {
       .token { grid-template-columns: 1fr; }
@@ -192,6 +252,21 @@
       <div class="pager" id="pager"></div>
     </section>
   </main>
+  <div class="modal-backdrop" id="decisionModal" aria-hidden="true">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="decisionTitle">
+      <div class="dialog-head">
+        <h2 id="decisionTitle">Moderator action</h2>
+        <p id="decisionMeta"></p>
+      </div>
+      <div class="dialog-body">
+        <textarea id="decisionNote" spellcheck="true"></textarea>
+      </div>
+      <div class="dialog-foot">
+        <button class="ghost" id="decisionCancel" type="button">Cancel</button>
+        <button class="primary" id="decisionConfirm" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const apiBase = '/api';
@@ -202,6 +277,12 @@
     const pagerEl = document.querySelector('#pager');
     const titleEl = document.querySelector('#viewTitle');
     const metaEl = document.querySelector('#viewMeta');
+    const decisionModal = document.querySelector('#decisionModal');
+    const decisionTitle = document.querySelector('#decisionTitle');
+    const decisionMeta = document.querySelector('#decisionMeta');
+    const decisionNote = document.querySelector('#decisionNote');
+    const decisionCancel = document.querySelector('#decisionCancel');
+    const decisionConfirm = document.querySelector('#decisionConfirm');
     const tabs = Array.from(document.querySelectorAll('.tab'));
     const state = {
       activeTab: 'reports',
@@ -254,6 +335,17 @@
       return value ? new Date(value).toLocaleString() : '-';
     }
 
+    function shortPeerId(value) {
+      const peerId = String(value ?? '').trim();
+      if (peerId.length <= 18) return peerId || '-';
+      return `${peerId.slice(0, 8)}...${peerId.slice(-8)}`;
+    }
+
+    function peerCell(value) {
+      const peerId = String(value ?? '').trim();
+      return `<span class="peer-id" title="${esc(peerId)}">${esc(shortPeerId(peerId))}</span>`;
+    }
+
     function metric(label, value) {
       return `<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`;
     }
@@ -272,8 +364,55 @@
       return `Warning issued because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`;
     }
 
+    function openDecisionModal({ title, meta, note, confirmLabel, danger }) {
+      return new Promise((resolve) => {
+        decisionTitle.textContent = title;
+        decisionMeta.textContent = meta;
+        decisionNote.value = note;
+        decisionConfirm.textContent = confirmLabel;
+        decisionConfirm.classList.toggle('danger', danger);
+        decisionConfirm.classList.toggle('confirm', danger);
+        decisionConfirm.classList.toggle('primary', !danger);
+        decisionModal.classList.add('open');
+        decisionModal.setAttribute('aria-hidden', 'false');
+        decisionNote.focus();
+        decisionNote.setSelectionRange(decisionNote.value.length, decisionNote.value.length);
+
+        const close = (value) => {
+          decisionModal.classList.remove('open');
+          decisionModal.setAttribute('aria-hidden', 'true');
+          decisionCancel.removeEventListener('click', onCancel);
+          decisionConfirm.removeEventListener('click', onConfirm);
+          decisionModal.removeEventListener('click', onBackdrop);
+          document.removeEventListener('keydown', onKeydown);
+          resolve(value);
+        };
+        const onCancel = () => close(null);
+        const onConfirm = () => close(decisionNote.value.trim());
+        const onBackdrop = (event) => {
+          if (event.target === decisionModal) close(null);
+        };
+        const onKeydown = (event) => {
+          if (event.key === 'Escape') close(null);
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            close(decisionNote.value.trim());
+          }
+        };
+        decisionCancel.addEventListener('click', onCancel);
+        decisionConfirm.addEventListener('click', onConfirm);
+        decisionModal.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onKeydown);
+      });
+    }
+
     async function actPeer(peerId, action, reportCount, reporterCount) {
-      const note = window.prompt('Moderator note', defaultDecisionNote(action, reportCount, reporterCount));
+      const note = await openDecisionModal({
+        title: action === 'ban' ? 'Ban user' : 'Warn user',
+        meta: shortPeerId(peerId),
+        note: defaultDecisionNote(action, reportCount, reporterCount),
+        confirmLabel: action === 'ban' ? 'Ban' : 'Warn',
+        danger: action === 'ban',
+      });
       if (note === null) return;
       await postJson(`/admin/moderation/peers/${encodeURIComponent(peerId)}/action`, {
         action,
@@ -286,7 +425,13 @@
     window.actPeer = actPeer;
 
     async function unbanAppeal(appealId, peerId) {
-      const note = window.prompt('Unban note', `Appeal accepted. Account ${peerId} is unblocked.`);
+      const note = await openDecisionModal({
+        title: 'Unban user',
+        meta: shortPeerId(peerId),
+        note: 'Appeal accepted. Account is unblocked.',
+        confirmLabel: 'Unban',
+        danger: false,
+      });
       if (note === null) return;
       await postJson(`/admin/moderation/appeals/${encodeURIComponent(appealId)}/unban`, { note });
       await load();
@@ -326,11 +471,11 @@
       const reports = pageItems(items);
       if (!items.length) return '<div class="empty">No reports</div>';
       return `<div class="table-wrap"><table>
-        <thead><tr><th>Received</th><th>Reported peer</th><th>Reporter</th><th>Reason</th><th>Type</th><th>Content</th></tr></thead>
+        <thead><tr><th class="col-date">Received</th><th class="col-peer">Reported peer</th><th class="col-peer">Reporter</th><th>Reason</th><th class="col-small">Type</th><th class="col-small">Content</th></tr></thead>
         <tbody>${reports.map((report) => `<tr>
           <td>${fmt(report.receivedAt)}</td>
-          <td>${esc(report.reportedPeerId)}</td>
-          <td>${esc(report.reporterPeerId)}</td>
+          <td>${peerCell(report.reportedPeerId)}</td>
+          <td>${peerCell(report.reporterPeerId)}</td>
           <td>${esc(report.reason)}</td>
           <td>${esc(report.type)}</td>
           <td>metadata only</td>
@@ -342,9 +487,9 @@
       const peers = pageItems(items);
       if (!items.length) return `<div class="empty">${emptyText}</div>`;
       return `<div class="table-wrap"><table>
-        <thead><tr><th>Peer ID</th><th>Total reports</th><th>Users</th><th>Direct</th><th>Group</th><th>Last report</th><th>${withActions ? 'Decision' : 'Status'}</th></tr></thead>
+        <thead><tr><th class="col-peer">Peer ID</th><th class="col-small">Reports</th><th class="col-small">Users</th><th class="col-small">Direct</th><th class="col-small">Group</th><th class="col-date">Last report</th><th class="col-actions">${withActions ? 'Decision' : 'Status'}</th></tr></thead>
         <tbody>${peers.map((peer) => `<tr>
-          <td>${esc(peer.peerId)}</td>
+          <td>${peerCell(peer.peerId)}</td>
           <td>${peer.reportCount || 0}</td>
           <td>${peer.reporterCount || 0}</td>
           <td>${peer.directCount || 0}</td>
@@ -361,10 +506,10 @@
       const appeals = pageItems(items);
       if (!items.length) return '<div class="empty">No appeals</div>';
       return `<div class="table-wrap"><table>
-        <thead><tr><th>Created</th><th>Peer ID</th><th>Status</th><th>Appeal</th><th>Resolved</th><th>Decision</th></tr></thead>
+        <thead><tr><th class="col-date">Created</th><th class="col-peer">Peer ID</th><th class="col-small">Status</th><th>Appeal</th><th class="col-date">Resolved</th><th class="col-actions">Decision</th></tr></thead>
         <tbody>${appeals.map((appeal) => `<tr>
           <td>${fmt(appeal.createdAt)}</td>
-          <td>${esc(appeal.peerId)}</td>
+          <td>${peerCell(appeal.peerId)}</td>
           <td>${esc(appeal.status)}</td>
           <td>${esc(appeal.text)}</td>
           <td>${fmt(appeal.resolvedAt)}</td>

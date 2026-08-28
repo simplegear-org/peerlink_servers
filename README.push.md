@@ -214,13 +214,18 @@ If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 - `POST /admin/moderation/peers/:peerId/action` — applies `warn`, `ban`, or `unban` directly to a peer
 
 Manual `warn`/`ban`/`unban` actions send a best-effort `moderation_policy` push to the
-target peer. The moderator UI pre-fills the note with the current report count
-and unique reporter count without exposing reporter Peer IDs. The push payload
-includes `messageKey`, `reportCount`, and `reporterCount`; the app renders the
-warning/ban text using the user's locale. Moderation policy pushes are data-only
-so the server does not have to guess the user's locale. `ban` is persisted
-locally; after an appeal is submitted the app can be viewed, but outgoing
-messages and calls stay blocked until `unban`.
+target peer. The moderator UI uses a dark tabbed layout for `Incoming Reports`,
+`Reported Users`, `Reporters`, and `Appeals`; long Peer IDs are shortened to
+`prefix...suffix`, and each table is paginated at 20 rows.
+
+The moderator UI pre-fills the action note with the current report count and
+unique reporter count without exposing reporter Peer IDs. `Warn`, `Ban`, and
+`Unban` use the same styled confirmation dialog. The push payload includes
+`messageKey`, `reportCount`, and `reporterCount`; the app renders the warning/ban
+text using the user's locale. Moderation policy pushes are data-only so the
+server does not have to guess the user's locale. `ban` is persisted locally;
+after an appeal is submitted the app can be viewed, but outgoing messages and
+calls stay blocked until `unban`.
 
 ## Security
 
@@ -292,7 +297,7 @@ npm run start:push
 
 The standalone stack now contains:
 - `push` — Node push runtime on internal port `4500`
-- `moderation-ui` — localhost-only moderator UI on `127.0.0.1:4501`
+- `moderation-ui` — localhost-only dark tabbed moderator UI on `127.0.0.1:4501`
 - `push-proxy` — public `nginx` on `80/443`
 - `certbot` — one-shot certificate issue helper
 - `certbot-renewer` — background renewal loop (`certbot renew` every `12h`)

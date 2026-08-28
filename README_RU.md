@@ -82,7 +82,8 @@ HTTP-сервис, который хранит токены устройств �
 - metadata-only moderation reports, appeals и ручной peer policy status для UGC/moderation flow
 - banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban`/`unban` принимает только модератор
 - при ручном `warning`/`ban` push best-effort отправляет пользователю data-only `moderation_policy`; payload содержит `messageKey`, `reportCount` и `reporterCount`, а клиент показывает текст на локали пользователя
-- Moderator UI предзаполняет note причиной с количеством жалоб и числом уникальных жалобщиков без раскрытия их Peer ID; отдельный блок `Appeals` позволяет принять апелляцию через `Unban`
+- Moderator UI использует темную тему и отдельные вкладки `Incoming Reports`, `Reported Users`, `Reporters`, `Appeals`; длинные Peer ID показываются сокращенно (`начало...конец`), списки пагинируются по 20 строк
+- Moderator UI предзаполняет note причиной с количеством жалоб и числом уникальных жалобщиков без раскрытия Peer ID жалобщиков; действия `Warn`/`Ban`/`Unban` открывают встроенное модальное окно в едином стиле
 - `GET /moderation/status` возвращает `signedStatus`, если задан `MODERATION_STATUS_SIGNING_PRIVATE_KEY`
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
