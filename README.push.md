@@ -1,7 +1,7 @@
 # PeerLink Push
 
 Push service for PeerLink. Stores device tokens and sends remote push:
-- message/update events via FCM/APNs alert (auto-selected by server)
+- message/update events via APNs alert or FCM data-only push (auto-selected by server)
 - incoming call events via data-only FCM and APNs VoIP (auto-selected by server)
 
 Main runtime file:
@@ -138,6 +138,12 @@ Fanout behavior:
   - `fcm` -> FCM push with normalized string `data`.
 - `delivery.voip` sends APNs VoIP to registered `voipToken` devices.
 - The server does not interpret business semantics inside `payload`; it forwards the technical payload and only uses recipients/delivery for routing.
+- For `direct_update` and `group_update`, APNs alert payloads include
+  `mutable-content: 1` so the iOS Notification Service Extension can apply
+  local blocked-peer filtering before presentation.
+- For `direct_update` and `group_update`, FCM delivery is data-only with Android
+  high priority; the Android client decides local notification presentation
+  after applying local blocked-peer filtering.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:
