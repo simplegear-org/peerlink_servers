@@ -819,9 +819,15 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
-      if (isCallInvite && isAppleTarget && delivery.voip && voipTopic) {
+      const hasVoipTokenForDevice = isCallInvite && isAppleTarget && delivery.voip && voipTopic
+        ? deviceRegistry.hasActiveVoipTokenForDevice({
+            userId: target.userId,
+            deviceId: target.deviceId,
+          })
+        : false;
+      if (hasVoipTokenForDevice) {
         console.log(
-          `[push] standard call skip sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId} platform=${platform} reason=voip_path`,
+          `[push] standard call skip sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId} platform=${platform} reason=voip_token_registered`,
         );
         continue;
       }

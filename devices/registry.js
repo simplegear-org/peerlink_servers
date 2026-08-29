@@ -161,6 +161,11 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
     return getActiveTokensForUsersFromMap(userIds, voipDevicesByUser);
   }
 
+  function hasActiveVoipTokenForDevice({ userId, deviceId }) {
+    const device = voipDevicesByUser.get(userId)?.get(deviceId);
+    return Boolean(device?.enabled && device.token);
+  }
+
   function getActiveTokensForUsersFromMap(userIds, devicesByUserMap) {
     const tokens = [];
     for (const userId of userIds) {
@@ -210,6 +215,7 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
     getActiveTokensForUsers,
     getActiveVoipTokensForUsers,
     getDevice,
+    hasActiveVoipTokenForDevice,
     listDevicesForUser,
     registerDevice,
     registerVoipDevice,

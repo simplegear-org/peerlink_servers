@@ -95,8 +95,10 @@ Push write contract:
 - standard delivery goes to regular message tokens via FCM/APNs alert or silent push,
 - VoIP delivery goes to APNs VoIP tokens,
 - FCM `data` values are normalized to strings; nested objects such as `servers` are JSON-encoded,
-- iOS/macOS `call_invite` skips standard delivery when VoIP delivery is enabled,
-  so CallKit is driven by the VoIP path only,
+- iOS/macOS `call_invite` skips standard delivery only when VoIP delivery is
+  enabled and the exact target device has an active `voipToken`, so CallKit is
+  driven by the VoIP path only; devices without an active VoIP token keep
+  standard delivery as fallback,
 - Android `direct_update` and `group_update` FCM delivery is data-only, while
   iOS uses FCM notification with APNs `mutable-content` for extension-side
   blocked-peer filtering,
