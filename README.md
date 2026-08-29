@@ -99,10 +99,10 @@ Push write contract:
   enabled and the exact target device has an active `voipToken`, so CallKit is
   driven by the VoIP path only; devices without an active VoIP token keep
   standard delivery as fallback,
-- Android `direct_update` and `group_update` FCM delivery is data-only, while
-  iOS uses FCM with an APNs alert payload, `mutable-content`, and no top-level
-  FCM `notification` so the Notification Service Extension can apply
-  blocked-peer filtering,
+- Android and iOS `direct_update`/`group_update` delivery is data-only. iOS
+  message updates use APNs `content-available` without a remote alert; the app
+  creates the local notification only after its native access-policy gate allows
+  the sender,
 - when `notification.title/body` is omitted, standard delivery is silent/data-only. Android `call_invite` uses this path so the client can decide foreground/fullscreen presentation.
 
 ### coturn

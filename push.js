@@ -818,8 +818,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
-      const useIosMutableApnsAlert =
-        isMessageUpdate && isIosTarget && hasNotificationText;
+      const useIosSilentMessageFilter = isMessageUpdate && isIosTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       const hasVoipTokenForDevice = isCallInvite && isAppleTarget && delivery.voip && voipTopic
         ? deviceRegistry.hasActiveVoipTokenForDevice({
@@ -843,7 +842,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           topic: apnsTopic,
           payload: {
             aps: {
-              ...(hasNotificationText
+              ...(hasNotificationText && !useIosSilentMessageFilter
                 ? {
                     alert: {
                       ...(notification?.title ? { title: notification.title } : {}),
@@ -857,13 +856,16 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                     'content-available': 1,
                   }),
             },
+            ...(useIosSilentMessageFilter && notification?.body
+              ? { notificationText: notification.body }
+              : {}),
             ...payload,
           },
         });
       } else {
         await pushProviders.sendFcm({
           token: target.token,
-          ...(hasNotificationText && !useNativeMessageFilter && !useIosMutableApnsAlert
+          ...(hasNotificationText && !useNativeMessageFilter && !useIosSilentMessageFilter
             ? {
                 notification: {
                   ...(notification?.title ? { title: notification.title } : {}),
@@ -878,27 +880,6 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                   : {}),
               }
             : {}),
-          ...(useIosMutableApnsAlert
-            ? {
-                apns: {
-                  headers: {
-                    'apns-push-type': 'alert',
-                    'apns-priority': '10',
-                  },
-                  payload: {
-                    aps: {
-                      alert: {
-                        ...(notification?.title ? { title: notification.title } : {}),
-                        ...(notification?.body ? { body: notification.body } : {}),
-                      },
-                      sound: 'default',
-                      badge: 1,
-                      'mutable-content': 1,
-                    },
-                  },
-                },
-              }
-            : {}),
           ...(!hasNotificationText || (isMessageUpdate && isAndroidTarget)
             ? {
                 android: {
@@ -906,7 +887,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                 },
               }
             : {}),
-          ...(isMessageUpdate && isIosTarget && !hasNotificationText
+          ...(useIosSilentMessageFilter
             ? {
                 apns: {
                   headers: {
@@ -919,9 +900,14 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                     },
                   },
                 },
-              }
+            }
             : {}),
-          data: payload,
+          data: {
+            ...(useIosSilentMessageFilter && notification?.body
+              ? { notificationText: notification.body }
+              : {}),
+            ...payload,
+          },
         });
       }
       standardSent += 1;

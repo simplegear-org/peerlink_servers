@@ -144,18 +144,13 @@ Fanout behavior:
   VoIP path only. If the device has no active VoIP token, standard delivery
   remains as a fallback. Android still receives standard FCM data-only call
   invites.
-- For `direct_update` and `group_update`, APNs alert payloads include
-  `mutable-content: 1` so the iOS Notification Service Extension can apply
-  local blocked-peer filtering before presentation.
 - For `direct_update` and `group_update` to Android targets, FCM delivery is
   data-only with high priority; the Android client decides local notification
   presentation after applying local blocked-peer filtering.
 - For `direct_update` and `group_update` to iOS FCM targets, FCM delivery uses
-  an APNs alert payload with `mutable-content: 1` and no top-level FCM
-  `notification`, so the iOS Notification Service Extension can apply local
-  blocked-peer filtering before presentation. This keeps background delivery
-  more reliable than iOS data-only message push while avoiding an FCM display
-  path that can bypass the extension.
+  APNs `content-available` and no remote alert. The iOS app creates a local
+  notification only after its native access-policy gate allows the sender.
+  This is required for blocked/contacts-only filtering before presentation.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:
