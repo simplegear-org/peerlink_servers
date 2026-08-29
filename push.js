@@ -811,11 +811,20 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   for (const target of standardTargets) {
     try {
       const hasNotificationText = Boolean(notification?.title || notification?.body);
+      const platform = (target.platform || '').toLowerCase();
+      const isCallInvite = payload.type === 'call_invite';
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
-      const isAndroidTarget = (target.platform || '').toLowerCase() === 'android';
-      const isIosTarget = (target.platform || '').toLowerCase() === 'ios';
+      const isAndroidTarget = platform === 'android';
+      const isIosTarget = platform === 'ios';
+      const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
+      if (isCallInvite && isAppleTarget && delivery.voip && voipTopic) {
+        console.log(
+          `[push] standard call skip sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId} platform=${platform} reason=voip_path`,
+        );
+        continue;
+      }
       if (provider === 'apns') {
         const apnsTopic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
         if (!apnsTopic) {

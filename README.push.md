@@ -138,6 +138,10 @@ Fanout behavior:
   - `fcm` -> FCM push with normalized string `data`.
 - `delivery.voip` sends APNs VoIP to registered `voipToken` devices.
 - The server does not interpret business semantics inside `payload`; it forwards the technical payload and only uses recipients/delivery for routing.
+- For `call_invite` to iOS/macOS targets, standard FCM/APNs delivery is skipped
+  when `delivery.voip=true` and an APNs VoIP topic is configured; CallKit should
+  be driven by the VoIP path only. Android still receives standard FCM data-only
+  call invites.
 - For `direct_update` and `group_update`, APNs alert payloads include
   `mutable-content: 1` so the iOS Notification Service Extension can apply
   local blocked-peer filtering before presentation.

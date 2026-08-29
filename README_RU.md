@@ -148,6 +148,7 @@ Security-логика push разнесена по отдельным модул
 - `POST /events/push` принимает `senderUserId`, `recipientUserIds`, app-defined `payload`, опциональные `notification` и `delivery`.
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
+- Для `call_invite` на iOS/macOS standard FCM/APNs delivery пропускается, если включен `delivery.voip` и настроен APNs VoIP topic; CallKit должен запускаться только через VoIP path. Android продолжает получать `call_invite` через standard FCM data-only.
 - Для `direct_update`/`group_update` на iOS FCM отправляется visible `notification` с APNs `mutable-content: 1`, чтобы Notification Service Extension могла применить локальный block-list перед показом. Это надежнее в фоне, чем iOS data-only message push.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
