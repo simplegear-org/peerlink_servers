@@ -814,7 +814,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
       const isAndroidTarget = (target.platform || '').toLowerCase() === 'android';
       const isIosTarget = (target.platform || '').toLowerCase() === 'ios';
-      const useNativeMessageFilter = isMessageUpdate && (isAndroidTarget || isIosTarget);
+      const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       if (provider === 'apns') {
         const apnsTopic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
@@ -868,7 +868,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                 },
               }
             : {}),
-          ...(isMessageUpdate && isIosTarget
+          ...(isMessageUpdate && isIosTarget && !hasNotificationText
             ? {
                 apns: {
                   headers: {

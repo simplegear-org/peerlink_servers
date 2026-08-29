@@ -2,9 +2,9 @@
 
 Project: PeerLink Servers
 
-Version: 1.4.7+2026082903
+Version: 1.4.8+2026082904
 
-Source tag: source-v1.4.7+2026082903
+Source tag: source-v1.4.8+2026082904
 
 License: AGPL-3.0-only
 

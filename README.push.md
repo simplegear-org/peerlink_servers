@@ -145,10 +145,10 @@ Fanout behavior:
   data-only with high priority; the Android client decides local notification
   presentation after applying local blocked-peer filtering.
 - For `direct_update` and `group_update` to iOS FCM targets, FCM delivery is
-  data-only with APNs `content-available` and no FCM `notification`; the iOS
-  client decides local notification presentation after applying local
-  blocked-peer filtering. If the app was force-quit by the user, iOS may defer
-  data-only delivery until the next launch.
+  visible `notification` with APNs `mutable-content: 1`, so the iOS
+  Notification Service Extension can apply local blocked-peer filtering before
+  presentation. This keeps background delivery more reliable than iOS
+  data-only message push.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:

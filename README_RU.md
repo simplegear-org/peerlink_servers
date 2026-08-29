@@ -78,7 +78,7 @@
 
 HTTP-сервис, который хранит токены устройств и отправляет push:
 - обычные события/уведомления через FCM и APNs alert
-- message/update push для Android/iOS через FCM data-only, чтобы клиент проверял локальные блокировки до показа уведомления
+- message/update push для Android через FCM data-only, для iOS через FCM notification с APNs `mutable-content`
 - входящие звонки через data-only FCM и APNs VoIP (канал выбирает сервер)
 - metadata-only moderation reports, appeals и ручной peer policy status для UGC/moderation flow
 - banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban`/`unban` принимает только модератор
@@ -148,7 +148,7 @@ Security-логика push разнесена по отдельным модул
 - `POST /events/push` принимает `senderUserId`, `recipientUserIds`, app-defined `payload`, опциональные `notification` и `delivery`.
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
-- Для `direct_update`/`group_update` на iOS FCM отправляется data-only с APNs `content-available`, без FCM `notification`; клиент показывает локальное уведомление только после проверки block-list. Если приложение принудительно выгружено пользователем, iOS может отложить data-only доставку до следующего запуска.
+- Для `direct_update`/`group_update` на iOS FCM отправляется visible `notification` с APNs `mutable-content: 1`, чтобы Notification Service Extension могла применить локальный block-list перед показом. Это надежнее в фоне, чем iOS data-only message push.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
 Moderation policy хранится в Postgres observability DB:
