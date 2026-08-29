@@ -73,7 +73,7 @@ Request body:
 - `signingPub` (required, base64 Ed25519 public key)
 - `userId` (required)
 - `deviceId` (required)
-- `messageToken` (required; FCM token for Android, APNS token for iOS/macOS)
+- `messageToken` (required; FCM token for Android/iOS/macOS, APNS token only for APNS-provider clients)
 - `messageProvider` (optional; `fcm` or `apns`, default `fcm`)
 - `voipToken` (optional; iOS/macOS PushKit token for CallKit)
 - `platform` (required, example: `android`, `ios`)
@@ -144,9 +144,11 @@ Fanout behavior:
 - For `direct_update` and `group_update` to Android targets, FCM delivery is
   data-only with high priority; the Android client decides local notification
   presentation after applying local blocked-peer filtering.
-- For `direct_update` and `group_update` to non-Android FCM targets, FCM keeps
-  the notification payload and includes APNs `mutable-content: 1` metadata for
-  iOS-compatible delivery.
+- For `direct_update` and `group_update` to iOS FCM targets, FCM delivery is
+  data-only with APNs `content-available` and no FCM `notification`; the iOS
+  client decides local notification presentation after applying local
+  blocked-peer filtering. If the app was force-quit by the user, iOS may defer
+  data-only delivery until the next launch.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:

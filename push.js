@@ -813,6 +813,8 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const hasNotificationText = Boolean(notification?.title || notification?.body);
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
       const isAndroidTarget = (target.platform || '').toLowerCase() === 'android';
+      const isIosTarget = (target.platform || '').toLowerCase() === 'ios';
+      const useNativeMessageFilter = isMessageUpdate && (isAndroidTarget || isIosTarget);
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       if (provider === 'apns') {
         const apnsTopic = pushProviders.normalizeApnsAlertTopic(APNS_MESSAGES_TOPIC);
@@ -844,7 +846,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       } else {
         await pushProviders.sendFcm({
           token: target.token,
-          ...(hasNotificationText && (!isMessageUpdate || !isAndroidTarget)
+          ...(hasNotificationText && !useNativeMessageFilter
             ? {
                 notification: {
                   ...(notification?.title ? { title: notification.title } : {}),
@@ -863,6 +865,21 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
             ? {
                 android: {
                   priority: 'HIGH',
+                },
+              }
+            : {}),
+          ...(isMessageUpdate && isIosTarget
+            ? {
+                apns: {
+                  headers: {
+                    'apns-push-type': 'background',
+                    'apns-priority': '5',
+                  },
+                  payload: {
+                    aps: {
+                      'content-available': 1,
+                    },
+                  },
                 },
               }
             : {}),

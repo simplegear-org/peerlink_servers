@@ -95,6 +95,8 @@ Push write contract:
 - standard delivery goes to regular message tokens via FCM/APNs alert or silent push,
 - VoIP delivery goes to APNs VoIP tokens,
 - FCM `data` values are normalized to strings; nested objects such as `servers` are JSON-encoded,
+- iOS/Android `direct_update` and `group_update` FCM delivery is data-only so
+  clients can apply local blocked-peer filtering before showing a notification,
 - when `notification.title/body` is omitted, standard delivery is silent/data-only. Android `call_invite` uses this path so the client can decide foreground/fullscreen presentation.
 
 ### coturn

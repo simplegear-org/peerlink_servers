@@ -68,6 +68,7 @@ export function createPushProviders({
       if (typeof notification.title === 'string') message.notification.title = notification.title;
       if (typeof notification.body === 'string') message.notification.body = notification.body;
       message.apns = {
+        ...(apns?.headers && typeof apns.headers === 'object' ? { headers: apns.headers } : {}),
         payload: {
           aps: {
             badge: 1,
@@ -79,6 +80,11 @@ export function createPushProviders({
             ...(apns?.mutableContent ? { 'mutable-content': 1 } : {}),
           },
         },
+      };
+    } else if (apns && typeof apns === 'object') {
+      message.apns = {
+        ...(apns.headers && typeof apns.headers === 'object' ? { headers: apns.headers } : {}),
+        ...(apns.payload && typeof apns.payload === 'object' ? { payload: apns.payload } : {}),
       };
     }
     if (android && typeof android === 'object') {
