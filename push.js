@@ -818,6 +818,8 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
+      const useIosMutableApnsAlert =
+        isMessageUpdate && isIosTarget && hasNotificationText;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       const hasVoipTokenForDevice = isCallInvite && isAppleTarget && delivery.voip && voipTopic
         ? deviceRegistry.hasActiveVoipTokenForDevice({
@@ -861,7 +863,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       } else {
         await pushProviders.sendFcm({
           token: target.token,
-          ...(hasNotificationText && !useNativeMessageFilter
+          ...(hasNotificationText && !useNativeMessageFilter && !useIosMutableApnsAlert
             ? {
                 notification: {
                   ...(notification?.title ? { title: notification.title } : {}),
@@ -874,6 +876,27 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                       },
                     }
                   : {}),
+              }
+            : {}),
+          ...(useIosMutableApnsAlert
+            ? {
+                apns: {
+                  headers: {
+                    'apns-push-type': 'alert',
+                    'apns-priority': '10',
+                  },
+                  payload: {
+                    aps: {
+                      alert: {
+                        ...(notification?.title ? { title: notification.title } : {}),
+                        ...(notification?.body ? { body: notification.body } : {}),
+                      },
+                      sound: 'default',
+                      badge: 1,
+                      'mutable-content': 1,
+                    },
+                  },
+                },
               }
             : {}),
           ...(!hasNotificationText || (isMessageUpdate && isAndroidTarget)

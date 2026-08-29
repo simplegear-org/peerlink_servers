@@ -1,6 +1,6 @@
 {
   "name": "peerlink-servers",
-  "version": "1.4.10+2026082906",
+  "version": "1.4.11+2026082907",
   "description": "PeerLink server suite for WebRTC relay, signaling, TURN and proxy",
   "type": "module",
   "license": "AGPL-3.0-only",

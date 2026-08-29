@@ -100,7 +100,8 @@ Push write contract:
   driven by the VoIP path only; devices without an active VoIP token keep
   standard delivery as fallback,
 - Android `direct_update` and `group_update` FCM delivery is data-only, while
-  iOS uses FCM notification with APNs `mutable-content` for extension-side
+  iOS uses FCM with an APNs alert payload, `mutable-content`, and no top-level
+  FCM `notification` so the Notification Service Extension can apply
   blocked-peer filtering,
 - when `notification.title/body` is omitted, standard delivery is silent/data-only. Android `call_invite` uses this path so the client can decide foreground/fullscreen presentation.
 
