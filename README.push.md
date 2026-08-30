@@ -1,7 +1,7 @@
 # PeerLink Push
 
 Push service for PeerLink. Stores device tokens and sends remote push:
-- message/update events via APNs alert or FCM data-only push (auto-selected by server)
+- message/update events via FCM data-only push or APNs background push (auto-selected by server)
 - incoming call events via data-only FCM and APNs VoIP (auto-selected by server)
 
 Main runtime file:
@@ -147,10 +147,12 @@ Fanout behavior:
 - For `direct_update` and `group_update` to Android targets, FCM delivery is
   data-only with high priority; the Android client decides local notification
   presentation after applying local blocked-peer filtering.
-- For `direct_update` and `group_update` to iOS FCM targets, FCM delivery uses
-  APNs `content-available` and no remote alert. The iOS app creates a local
-  notification only after its native access-policy gate allows the sender.
-  This is required for blocked/contacts-only filtering before presentation.
+- For `direct_update` and `group_update` to iOS targets, standard delivery is
+  data-only. FCM targets use APNs `content-available` through FCM; APNS-provider
+  targets use native APNs background delivery (`apns-push-type: background`,
+  `apns-priority: 5`). No remote alert is sent. The iOS app creates a local
+  notification only after its native access-policy gate allows the sender. This
+  is required for blocked/contacts-only filtering before presentation.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:

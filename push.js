@@ -837,7 +837,10 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         if (!apnsTopic) {
           throw new Error('apns messages topic is not configured');
         }
-        await pushProviders.sendApnsAlert({
+        const sendApns = useIosSilentMessageFilter
+          ? pushProviders.sendApnsBackground
+          : pushProviders.sendApnsAlert;
+        await sendApns({
           token: target.token,
           topic: apnsTopic,
           payload: {

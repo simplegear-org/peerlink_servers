@@ -100,9 +100,10 @@ Push write contract:
   driven by the VoIP path only; devices without an active VoIP token keep
   standard delivery as fallback,
 - Android and iOS `direct_update`/`group_update` delivery is data-only. iOS
-  message updates use APNs `content-available` without a remote alert; the app
-  creates the local notification only after its native access-policy gate allows
-  the sender,
+  message updates use APNs `content-available` without a remote alert; native
+  APNS-provider targets are sent as `apns-push-type: background` with priority
+  `5`. The app creates the local notification only after its native access-policy
+  gate allows the sender,
 - when `notification.title/body` is omitted, standard delivery is silent/data-only. Android `call_invite` uses this path so the client can decide foreground/fullscreen presentation.
 
 ### coturn
