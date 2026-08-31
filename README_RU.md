@@ -156,6 +156,10 @@ Security-логика push разнесена по отдельным модул
 - Для `call_invite` на iOS/macOS standard FCM/APNs delivery пропускается только если включен `delivery.voip`, настроен APNs VoIP topic и у конкретного устройства есть активный `voipToken`; CallKit должен запускаться через VoIP path. Если у устройства нет активного VoIP-токена, standard delivery остается fallback. Android продолжает получать `call_invite` через standard FCM data-only.
 - Для `direct_update`/`group_update` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`.
 - При отсутствии access-policy snapshot режим задает `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. По умолчанию `allow`, чтобы старые клиенты оставались совместимыми и получали push без новой серверной фильтрации. После rollout клиентов можно включить `drop`.
+- Диагностика access-policy пишется в stdout:
+  - `[push][access-policy]` после sync snapshot: `userId`, `policyVersion`, `contactsCount`, `blockedCount`, `snapshotHash`, результат.
+  - `[push][access-policy][decisions]` при fanout: per-recipient `allowed`, `reason`, `policyVersion`, `contactsCount`, `blockedCount`.
+  - `[push] standard send skipped ... reason=policy_blocked`, когда push реально отброшен blocklist.
 - После allow iOS `direct_update`/`group_update` отправляется как visible alert push с APNs priority `10` и `mutable-content: 1`; Android message/update остается data-only с высоким priority.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
@@ -391,6 +395,11 @@ access-policy snapshots.
 - `peerlink_push_access_policy_sync_total`
 - `peerlink_push_access_policy_users`
 - `peerlink_push_access_policy_max_age_seconds`
+
+Stdout-диагностика access-policy:
+- `[push][access-policy]` логирует accepted/stale snapshot sync без полного списка peerId.
+- `[push][access-policy][decisions]` логирует allow/drop причины при fanout.
+- `[push] standard send skipped ... reason=policy_<reason>` логирует фактический skip standard push.
 
 Grafana доступна только на origin-хосте.
 В `PeerLink Push Observability` добавлены панели `Access Policy Users`,

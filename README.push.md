@@ -178,6 +178,14 @@ Fanout behavior:
   `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. Default `allow` keeps older clients
   compatible and sends pushes without the new server-side filter. Future strict
   deployments can set `drop`.
+- Access-policy diagnostics are written to stdout:
+  - `[push][access-policy]` after snapshot sync, with `userId`,
+    `policyVersion`, `contactsCount`, `blockedCount`, `snapshotHash`, and
+    result.
+  - `[push][access-policy][decisions]` during push fanout, with per-recipient
+    `allowed`, `reason`, `policyVersion`, `contactsCount`, and `blockedCount`.
+  - `[push] standard send skipped ... reason=policy_blocked` when a push is
+    dropped by the blocklist.
 - After allow, iOS `direct_update`/`group_update` uses visible alert delivery
   with APNs priority `10` and `mutable-content: 1`, so iOS can show the push even
   when the app is suspended. Android message/update delivery remains data-only
@@ -456,6 +464,13 @@ Access-policy metrics:
 - `peerlink_push_access_policy_sync_total`
 - `peerlink_push_access_policy_users`
 - `peerlink_push_access_policy_max_age_seconds`
+
+Access-policy stdout diagnostics:
+- `[push][access-policy]` logs accepted/stale snapshot sync without full peer
+  lists.
+- `[push][access-policy][decisions]` logs allow/drop reasons during fanout.
+- `[push] standard send skipped ... reason=policy_<reason>` logs actual skipped
+  standard push sends.
 
 The moderator UI is exposed only on the origin host:
 

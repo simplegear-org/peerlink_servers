@@ -344,28 +344,66 @@ export class PushObservability {
     }
     if (policy.blockedPeerIds.has(senderUserId)) {
       this.policyDecisions.inc({ decision: 'drop_blocked' });
-      return { allowed: false, reason: 'blocked' };
+      return {
+        allowed: false,
+        reason: 'blocked',
+        policyVersion: Number(policy.policyVersion || 0),
+        snapshotHash: policy.snapshotHash || '',
+        contactsCount: policy.contactPeerIds.size,
+        blockedCount: policy.blockedPeerIds.size,
+      };
     }
     if (!policy.allowMessagesOnlyFromContacts) {
       this.policyDecisions.inc({ decision: 'allow' });
-      return { allowed: true, reason: 'allow_all' };
+      return {
+        allowed: true,
+        reason: 'allow_all',
+        policyVersion: Number(policy.policyVersion || 0),
+        snapshotHash: policy.snapshotHash || '',
+        contactsCount: policy.contactPeerIds.size,
+        blockedCount: policy.blockedPeerIds.size,
+      };
     }
     if (policy.contactPeerIds.has(senderUserId)) {
       this.policyDecisions.inc({ decision: 'allow' });
-      return { allowed: true, reason: 'contact' };
+      return {
+        allowed: true,
+        reason: 'contact',
+        policyVersion: Number(policy.policyVersion || 0),
+        snapshotHash: policy.snapshotHash || '',
+        contactsCount: policy.contactPeerIds.size,
+        blockedCount: policy.blockedPeerIds.size,
+      };
     }
     this.policyDecisions.inc({ decision: 'drop_not_contact' });
-    return { allowed: false, reason: 'not_contact' };
+    return {
+      allowed: false,
+      reason: 'not_contact',
+      policyVersion: Number(policy.policyVersion || 0),
+      snapshotHash: policy.snapshotHash || '',
+      contactsCount: policy.contactPeerIds.size,
+      blockedCount: policy.blockedPeerIds.size,
+    };
   }
 
   async filterByAccessPolicy({ senderUserId, recipientUserIds, missingSnapshotMode = 'allow' }) {
     const allowed = [];
     const dropped = [];
+    const decisions = [];
     for (const recipientUserId of recipientUserIds) {
       const decision = await this.decideAccessPolicy({
         recipientUserId,
         senderUserId,
         missingSnapshotMode,
+      });
+      decisions.push({
+        userId: recipientUserId,
+        allowed: decision.allowed,
+        reason: decision.reason,
+        policyVersion: decision.policyVersion ?? null,
+        snapshotHash: decision.snapshotHash || '',
+        contactsCount: decision.contactsCount ?? null,
+        blockedCount: decision.blockedCount ?? null,
       });
       if (decision.allowed) {
         allowed.push(recipientUserId);
@@ -373,7 +411,7 @@ export class PushObservability {
         dropped.push({ userId: recipientUserId, reason: decision.reason });
       }
     }
-    return { allowed, dropped };
+    return { allowed, dropped, decisions };
   }
 
   async peerIdentityBinding(peerId) {

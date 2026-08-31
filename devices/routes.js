@@ -98,6 +98,16 @@ export function registerDeviceRoutes({
       return res.status(403).json({ error: 'peer_banned' });
     }
     const result = await observability.upsertAccessPolicy(snapshot);
+    console.log('[push][access-policy]', {
+      userId: snapshot.userId,
+      allowMessagesOnlyFromContacts: snapshot.allowMessagesOnlyFromContacts,
+      contactsCount: snapshot.contactPeerIds.length,
+      blockedCount: snapshot.blockedPeerIds.length,
+      policyVersion: snapshot.policyVersion,
+      snapshotHash: snapshot.snapshotHash,
+      result: result.stale ? 'stale' : (result.ok ? 'ok' : 'failed'),
+      effectivePolicyVersion: result.policyVersion,
+    });
     return res.json(result);
   });
 

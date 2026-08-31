@@ -832,7 +832,13 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         recipientUserIds: moderationAllowedRecipients.allowed,
         missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
       })
-    : { allowed: moderationAllowedRecipients.allowed, dropped: [] };
+    : { allowed: moderationAllowedRecipients.allowed, dropped: [], decisions: [] };
+  if (isAccessFilteredEvent) {
+    console.log('[push][access-policy][decisions]', {
+      senderUserId,
+      decisions: accessAllowedRecipients.decisions,
+    });
+  }
   if (accessAllowedRecipients.allowed.length === 0) {
     return res.status(403).json({
       ok: false,
