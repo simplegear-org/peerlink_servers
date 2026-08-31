@@ -6,7 +6,9 @@ export function registerDeviceRoutes({
   requireSignedRequest,
   buildRegisterSignaturePayload,
   buildUnregisterSignaturePayload,
+  buildAccessPolicySignaturePayload,
   verifyAndBindPeerIdentity,
+  enforcePeerIdentityBinding,
   observability,
   deviceRegistry,
   normalizeUserId,
@@ -15,6 +17,7 @@ export function registerDeviceRoutes({
   normalizeTokenInput,
   normalizeVoipTokenInput,
   normalizePlatform,
+  normalizeAccessPolicySnapshot,
 }) {
   app.post('/devices/register', requireAuth, requireSignedRequest(buildRegisterSignaturePayload), async (req, res) => {
     const userId = normalizeUserId(req.body?.userId);
@@ -53,7 +56,7 @@ export function registerDeviceRoutes({
       hasVoipToken: Boolean(voipToken),
       identityBinding: binding.legacy ? 'legacy' : 'verified',
     });
-    const device = deviceRegistry.registerDevice({
+    const device = await deviceRegistry.registerDevice({
       userId,
       deviceId,
       token: messageToken,
@@ -62,7 +65,7 @@ export function registerDeviceRoutes({
       messageProvider,
     });
     if (voipToken) {
-      deviceRegistry.registerVoipDevice({
+      await deviceRegistry.registerVoipDevice({
         userId,
         deviceId,
         token: voipToken,
@@ -78,7 +81,27 @@ export function registerDeviceRoutes({
     });
   });
 
-  app.post('/devices/unregister', requireAuth, requireSignedRequest(buildUnregisterSignaturePayload), (req, res) => {
+  app.post('/devices/access-policy', requireAuth, requireSignedRequest(buildAccessPolicySignaturePayload), async (req, res) => {
+    const snapshot = normalizeAccessPolicySnapshot(req.body);
+    if (!snapshot) {
+      return res.status(400).json({ error: 'invalid_payload' });
+    }
+    const binding = await enforcePeerIdentityBinding({
+      peerId: snapshot.userId,
+      signingPubB64: req.body.signingPub,
+      source: 'devices_access_policy',
+    });
+    if (!binding.ok) {
+      return res.status(401).json({ error: binding.error });
+    }
+    if (await observability.isPeerBanned(snapshot.userId)) {
+      return res.status(403).json({ error: 'peer_banned' });
+    }
+    const result = await observability.upsertAccessPolicy(snapshot);
+    return res.json(result);
+  });
+
+  app.post('/devices/unregister', requireAuth, requireSignedRequest(buildUnregisterSignaturePayload), async (req, res) => {
     const userId = normalizeUserId(req.body?.userId);
     const deviceId = normalizeDeviceId(req.body?.deviceId);
     const token = normalizeTokenInput(req.body?.token);
@@ -86,7 +109,7 @@ export function registerDeviceRoutes({
       return res.status(400).json({ error: 'invalid_payload' });
     }
     const existing = deviceRegistry.getDevice({ userId, deviceId });
-    const ok = deviceRegistry.unregisterDevice({ userId, deviceId, token });
+    const ok = await deviceRegistry.unregisterDevice({ userId, deviceId, token });
     if (ok) {
       observability.recordDeviceUnregister({
         platform: existing?.platform || 'unknown',

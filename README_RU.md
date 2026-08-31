@@ -78,7 +78,7 @@
 
 HTTP-сервис, который хранит токены устройств и отправляет push:
 - обычные события/уведомления через FCM и APNs alert/background
-- message/update push для Android и iOS через data-only; iOS-клиент сам показывает local notification после native access-policy gate
+- message/update push через server-side access-policy filtering; iOS после allow получает alert push
 - входящие звонки через data-only FCM и APNs VoIP (канал выбирает сервер)
 - metadata-only moderation reports, appeals и ручной peer policy status для UGC/moderation flow
 - banned peer не может регистрировать устройства, отправлять signed push fanout или создавать новые reports; решение `warning`/`ban`/`unban` принимает только модератор
@@ -89,6 +89,7 @@ HTTP-сервис, который хранит токены устройств �
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
 - `POST /devices/register` — регистрация/обновление устройства (`userId`, `deviceId`, `messageToken`, `messageProvider`, `voipToken?`, `platform`)
+- `POST /devices/access-policy` — запись snapshot контактов/blocklist для server-side push filtering
 - `POST /devices/unregister` — деактивация устройства
 - `GET /devices/by-user/:userId` — список устройств пользователя
 - `POST /events/push` — универсальный signed fanout push-событий по устройствам получателей
@@ -102,7 +103,7 @@ HTTP-сервис, который хранит токены устройств �
 - `GET /health` — статус конфигурации FCM и защитных механизмов
 
 Security-логика push разнесена по отдельным модулям:
-- `devices/registry.js` — in-memory registry message/VoIP токенов устройств
+- `devices/registry.js` — registry message/VoIP токенов устройств с Postgres-backed storage и in-memory fallback/cache
 - `devices/routes.js` — маршруты `/devices/*`
 - `delivery/dedup-cache.js` — TTL-cache для дедупликации push-событий
 - `delivery/providers.js` — клиенты FCM/APNs и проверка APNs topic
@@ -143,13 +144,19 @@ Security-логика push разнесена по отдельным модул
   - identity proof payload: `peerlink_identity_binding_v2|peerId|signingPub|identityNonce`
 - `/devices/register` проверяет `peerId == SHA-256("uid:v2:" + signingPub + ":" + identityNonce)` и сохраняет binding `peerId -> signingPub`
 - режим миграции soft: legacy-клиенты без binding продолжают работать, но если binding уже есть, mismatch ключа отклоняется для `/events/push`, `/moderation/reports` и `/moderation/appeals`
+- `POST /devices/access-policy` принимает signed snapshot получателя:
+  `userId/peerId`, `allowMessagesOnlyFromContacts`, `contactPeerIds`, `blockedPeerIds`, `policyVersion`, `updatedAt`, `snapshotHash`
+- payload подписи `/devices/access-policy`:
+  `id|from|userId|allowMessagesOnlyFromContacts|contactPeerIdsJson|blockedPeerIdsJson|policyVersion|updatedAt|snapshotHash|ts`
 - для `/events/push` поле `from` должно совпадать с `senderUserId`
 - anti-replay по `id` через TTL-кэш на стороне сервиса
 - `POST /events/push` принимает `senderUserId`, `recipientUserIds`, app-defined `payload`, опциональные `notification` и `delivery`.
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
 - Для `call_invite` на iOS/macOS standard FCM/APNs delivery пропускается только если включен `delivery.voip`, настроен APNs VoIP topic и у конкретного устройства есть активный `voipToken`; CallKit должен запускаться через VoIP path. Если у устройства нет активного VoIP-токена, standard delivery остается fallback. Android продолжает получать `call_invite` через standard FCM data-only.
-- Для `direct_update`/`group_update` на iOS standard delivery идет silent/data-only с APNs `content-available`, без remote alert. APNS-provider targets отправляются как `apns-push-type: background` с priority `5`; FCM targets получают тот же background APNs path через FCM. Клиент создает локальное уведомление только после native access-policy gate, поэтому blocked и contacts-only применяются до показа.
+- Для `direct_update`/`group_update` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`.
+- При отсутствии access-policy snapshot режим задает `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. По умолчанию `allow`, чтобы старые клиенты оставались совместимыми и получали push без новой серверной фильтрации. После rollout клиентов можно включить `drop`.
+- После allow iOS `direct_update`/`group_update` отправляется как visible alert push с APNs priority `10` и `mutable-content: 1`; Android message/update остается data-only с высоким priority.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
 Moderation policy хранится в Postgres observability DB:
@@ -370,9 +377,24 @@ https://<PUSH_PUBLIC_HOST>
 Self-hosted серверы извлекаются из `payload.servers`, `signalServers`,
 `relayServers`, `turnServers` и `iceServers` в `/events/push` и `/send`.
 Postgres хранит полный список серверов, счётчики сообщений/звонков, статус
-проверки и latency последней проверки.
+проверки, latency последней проверки, активные push-устройства и
+access-policy snapshots.
+
+Таблицы push persistence/access-policy:
+- `push_devices`
+- `push_user_policy`
+- `push_user_contacts`
+- `push_user_blocked`
+
+Метрики access-policy:
+- `peerlink_push_access_policy_decisions_total`
+- `peerlink_push_access_policy_sync_total`
+- `peerlink_push_access_policy_users`
+- `peerlink_push_access_policy_max_age_seconds`
 
 Grafana доступна только на origin-хосте.
+В `PeerLink Push Observability` добавлены панели `Access Policy Users`,
+`Access Policy Max Age`, `Access Policy Decisions`, `Access Policy Sync`.
 
 Для сайта публикуйте только свежие healthy серверы:
 
@@ -746,6 +768,7 @@ Relay API выполняет серверную проверку Ed25519-под�
 - `PORT` — порт сервиса (по умолчанию `4500`)
 - `PUSH_API_TOKEN` — optional bearer-токен для защиты endpoint-ов (дополнительный слой)
 - `PUSH_MAX_DEVICES_PER_USER` — ограничение числа устройств на пользователя (по умолчанию `20`)
+- `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE` — `allow` по умолчанию для совместимости со старыми клиентами; `drop` включать только после rollout клиента
 - `PUSH_SIGNATURE_SKEW_SECONDS` — допустимое окно для `ts` подписи (по умолчанию `120`)
 - `PUSH_SIGNED_ID_TTL_SECONDS` — TTL anti-replay кэша `id` (по умолчанию `300`)
 - `FCM_PROJECT_ID`

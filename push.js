@@ -45,6 +45,10 @@ const MAX_DEVICES_PER_USER = Number.parseInt(process.env.PUSH_MAX_DEVICES_PER_US
 const SIGNATURE_SKEW_SECONDS = Number.parseInt(process.env.PUSH_SIGNATURE_SKEW_SECONDS || '120', 10);
 const SIGNED_ID_TTL_SECONDS = Number.parseInt(process.env.PUSH_SIGNED_ID_TTL_SECONDS || '300', 10);
 const MODERATION_STATUS_SIGNING_PRIVATE_KEY = (process.env.MODERATION_STATUS_SIGNING_PRIVATE_KEY || '').trim();
+const PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE =
+  (process.env.PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE || 'allow').trim().toLowerCase() === 'drop'
+    ? 'drop'
+    : 'allow';
 
 const FCM_PROJECT_ID = (process.env.FCM_PROJECT_ID || '').trim();
 const FCM_CREDENTIALS_JSON = (process.env.FCM_CREDENTIALS_JSON || '').trim();
@@ -55,7 +59,6 @@ const APNS_VOIP_TOPIC = (process.env.APNS_VOIP_TOPIC || '').trim();
 const APNS_MESSAGES_TOPIC = (process.env.APNS_MESSAGES_TOPIC || '').trim();
 const APNS_USE_SANDBOX = (process.env.APNS_USE_SANDBOX || 'true').trim().toLowerCase() !== 'false';
 
-const deviceRegistry = createDeviceRegistry({ maxDevicesPerUser: MAX_DEVICES_PER_USER });
 const dedup = createDedupCache({
   ttlSeconds: DEDUP_TTL_SECONDS,
   normalizeTokenInput,
@@ -73,6 +76,11 @@ const pushProviders = createPushProviders({
 });
 const observability = new PushObservability();
 await observability.init();
+const deviceRegistry = createDeviceRegistry({
+  maxDevicesPerUser: MAX_DEVICES_PER_USER,
+  observability,
+});
+await deviceRegistry.loadFromStorage();
 const signedRequests = createSignedRequestVerifier({
   skewSeconds: SIGNATURE_SKEW_SECONDS,
   signedIdTtlSeconds: SIGNED_ID_TTL_SECONDS,
@@ -561,6 +569,46 @@ function normalizeDelivery(value) {
   };
 }
 
+function normalizePeerIdList(value) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => normalizePeerId(item)).filter(Boolean))].sort()
+    : [];
+}
+
+function normalizeAccessPolicySnapshot(body) {
+  if (!body || typeof body !== 'object') return null;
+  const userId = normalizeUserId(body.userId || body.peerId);
+  const policyVersion = Number.parseInt(String(body.policyVersion ?? '0'), 10);
+  const updatedAt = normalizeTimestamp(body.updatedAt) || new Date().toISOString();
+  const snapshotHash = normalizeStringValue(body.snapshotHash, 256) || '';
+  if (!userId || !Number.isFinite(policyVersion) || policyVersion < 0) return null;
+  return {
+    userId,
+    allowMessagesOnlyFromContacts: body.allowMessagesOnlyFromContacts === true,
+    contactPeerIds: normalizePeerIdList(body.contactPeerIds),
+    blockedPeerIds: normalizePeerIdList(body.blockedPeerIds),
+    policyVersion,
+    updatedAt,
+    snapshotHash,
+  };
+}
+
+function buildAccessPolicySignaturePayload(body, normalized) {
+  const snapshot = normalizeAccessPolicySnapshot(body);
+  if (!snapshot) {
+    throw new Error('invalid access policy fields');
+  }
+  if (normalized.from !== snapshot.userId) {
+    throw new Error('from must match userId');
+  }
+  return Buffer.from(
+    `${normalized.id}|${normalized.from}|${snapshot.userId}|${snapshot.allowMessagesOnlyFromContacts}|`
+      + `${JSON.stringify(snapshot.contactPeerIds)}|${JSON.stringify(snapshot.blockedPeerIds)}|`
+      + `${snapshot.policyVersion}|${snapshot.updatedAt}|${snapshot.snapshotHash}|${normalized.ts}`,
+    'utf8',
+  );
+}
+
 function buildPushEventSignaturePayload(body, normalized) {
   const senderUserId = normalizeUserId(body.senderUserId);
   const recipients = normalizeRecipients(body.recipientUserIds);
@@ -640,6 +688,9 @@ app.get('/health', async (_req, res) => {
     identityBindings: {
       verifiedPeers: await observability.peerIdentityBindingCount(),
       mode: 'soft',
+    },
+    accessPolicy: {
+      missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
     },
     devices: deviceRegistry.stats(),
     ts: Date.now(),
@@ -732,7 +783,9 @@ registerDeviceRoutes({
   requireSignedRequest,
   buildRegisterSignaturePayload,
   buildUnregisterSignaturePayload,
+  buildAccessPolicySignaturePayload,
   verifyAndBindPeerIdentity,
+  enforcePeerIdentityBinding,
   observability,
   deviceRegistry,
   normalizeUserId,
@@ -741,6 +794,7 @@ registerDeviceRoutes({
   normalizeTokenInput,
   normalizeVoipTokenInput,
   normalizePlatform,
+  normalizeAccessPolicySnapshot,
 });
 
 app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignaturePayload), async (req, res) => {
@@ -763,12 +817,28 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   if (await observability.isPeerBanned(senderUserId)) {
     return res.status(403).json({ error: 'peer_banned' });
   }
-  const allowedRecipients = await observability.filterAllowedPeers(recipientUserIds);
-  if (allowedRecipients.allowed.length === 0) {
+  const moderationAllowedRecipients = await observability.filterAllowedPeers(recipientUserIds);
+  if (moderationAllowedRecipients.allowed.length === 0) {
     return res.status(403).json({
       ok: false,
       error: 'all_recipients_banned',
-      bannedRecipients: allowedRecipients.banned,
+      bannedRecipients: moderationAllowedRecipients.banned,
+    });
+  }
+  const isAccessFilteredEvent = payload.type === 'direct_update' || payload.type === 'group_update';
+  const accessAllowedRecipients = isAccessFilteredEvent
+    ? await observability.filterByAccessPolicy({
+        senderUserId,
+        recipientUserIds: moderationAllowedRecipients.allowed,
+        missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
+      })
+    : { allowed: moderationAllowedRecipients.allowed, dropped: [] };
+  if (accessAllowedRecipients.allowed.length === 0) {
+    return res.status(403).json({
+      ok: false,
+      error: 'all_recipients_filtered',
+      bannedRecipients: moderationAllowedRecipients.banned,
+      droppedRecipients: accessAllowedRecipients.dropped,
     });
   }
   const dedupBody = {
@@ -791,15 +861,16 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   }
   observability.recordPushEvent({ payload, delivery });
   const standardTargets = delivery.standard
-    ? deviceRegistry.getActiveTokensForUsers(allowedRecipients.allowed)
+    ? deviceRegistry.getActiveTokensForUsers(accessAllowedRecipients.allowed)
     : [];
   const voipTargets = delivery.voip
-    ? deviceRegistry.getActiveVoipTokensForUsers(allowedRecipients.allowed)
+    ? deviceRegistry.getActiveVoipTokensForUsers(accessAllowedRecipients.allowed)
     : [];
   console.log('[push][event][targets]', {
     senderUserId,
-    recipients: allowedRecipients.allowed,
-    bannedRecipients: allowedRecipients.banned,
+    recipients: accessAllowedRecipients.allowed,
+    bannedRecipients: moderationAllowedRecipients.banned,
+    droppedRecipients: accessAllowedRecipients.dropped,
     delivery,
     pushKeys: Object.keys(payload),
     standardTargets: standardTargets.map(describeFcmTarget),
@@ -810,7 +881,6 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   let standardFailed = 0;
   for (const target of standardTargets) {
     try {
-      const hasNotificationText = Boolean(notification?.title || notification?.body);
       const platform = (target.platform || '').toLowerCase();
       const isCallInvite = payload.type === 'call_invite';
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
@@ -818,8 +888,28 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
-      const useIosSilentMessageFilter = isMessageUpdate && isIosTarget;
+      const useIosAlertMessagePush = isMessageUpdate && isIosTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
+      const effectiveNotification = useIosAlertMessagePush && !notification
+        ? {
+            title: 'PeerLink',
+            body: payload.type === 'group_update' ? 'New group message' : 'New message',
+          }
+        : notification;
+      const hasNotificationText = Boolean(effectiveNotification?.title || effectiveNotification?.body);
+      const targetPolicy = isMessageUpdate
+        ? await observability.decideAccessPolicy({
+            recipientUserId: target.userId,
+            senderUserId,
+            missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
+          })
+        : { allowed: true, reason: 'not_applicable' };
+      if (!targetPolicy.allowed) {
+        console.log(
+          `[push] standard send skipped sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId} platform=${platform} reason=policy_${targetPolicy.reason}`,
+        );
+        continue;
+      }
       const hasVoipTokenForDevice = isCallInvite && isAppleTarget && delivery.voip && voipTopic
         ? deviceRegistry.hasActiveVoipTokenForDevice({
             userId: target.userId,
@@ -837,19 +927,16 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         if (!apnsTopic) {
           throw new Error('apns messages topic is not configured');
         }
-        const sendApns = useIosSilentMessageFilter
-          ? pushProviders.sendApnsBackground
-          : pushProviders.sendApnsAlert;
-        await sendApns({
+        await pushProviders.sendApnsAlert({
           token: target.token,
           topic: apnsTopic,
           payload: {
             aps: {
-              ...(hasNotificationText && !useIosSilentMessageFilter
+              ...(hasNotificationText || useIosAlertMessagePush
                 ? {
                     alert: {
-                      ...(notification?.title ? { title: notification.title } : {}),
-                      ...(notification?.body ? { body: notification.body } : {}),
+                      ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                      ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
                     },
                     sound: 'default',
                     badge: 1,
@@ -859,20 +946,17 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                     'content-available': 1,
                   }),
             },
-            ...(useIosSilentMessageFilter && notification?.body
-              ? { notificationText: notification.body }
-              : {}),
             ...payload,
           },
         });
       } else {
         await pushProviders.sendFcm({
           token: target.token,
-          ...(hasNotificationText && !useNativeMessageFilter && !useIosSilentMessageFilter
+          ...(hasNotificationText && !useNativeMessageFilter
             ? {
                 notification: {
-                  ...(notification?.title ? { title: notification.title } : {}),
-                  ...(notification?.body ? { body: notification.body } : {}),
+                  ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                  ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
                 },
                 ...(isMessageUpdate
                   ? {
@@ -890,25 +974,32 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                 },
               }
             : {}),
-          ...(useIosSilentMessageFilter
+          ...(useIosAlertMessagePush
             ? {
                 apns: {
                   headers: {
-                    'apns-push-type': 'background',
-                    'apns-priority': '5',
+                    'apns-push-type': 'alert',
+                    'apns-priority': '10',
                   },
                   payload: {
                     aps: {
-                      'content-available': 1,
+                      ...(hasNotificationText
+                        ? {
+                            alert: {
+                              ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                              ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
+                            },
+                            sound: 'default',
+                            badge: 1,
+                          }
+                        : {}),
+                      'mutable-content': 1,
                     },
                   },
                 },
             }
             : {}),
           data: {
-            ...(useIosSilentMessageFilter && notification?.body
-              ? { notificationText: notification.body }
-              : {}),
             ...payload,
           },
         });
@@ -975,7 +1066,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           failed: 1,
         });
         if (shouldInvalidateVoipToken(error)) {
-          const invalidated = deviceRegistry.unregisterVoipDevice({
+          const invalidated = await deviceRegistry.unregisterVoipDevice({
             userId: target.userId,
             deviceId: target.deviceId,
             token: target.token,
@@ -1001,8 +1092,9 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
     ok: true,
     provider: delivery.voip ? 'mixed' : 'standard',
     deduped: false,
-    recipients: allowedRecipients.allowed.length,
-    bannedRecipients: allowedRecipients.banned,
+    recipients: accessAllowedRecipients.allowed.length,
+    bannedRecipients: moderationAllowedRecipients.banned,
+    droppedRecipients: accessAllowedRecipients.dropped,
     devices: standardTargets.length + voipTargets.length,
     sent,
     failed,

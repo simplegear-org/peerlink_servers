@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-export function createDeviceRegistry({ maxDevicesPerUser }) {
+export function createDeviceRegistry({ maxDevicesPerUser, observability = null } = {}) {
   const devicesByUser = new Map();
   const tokenToOwner = new Map();
   const voipDevicesByUser = new Map();
@@ -36,8 +36,53 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
     return devices;
   }
 
-  function registerDevice({ userId, deviceId, token, platform, appVersion, messageProvider = 'fcm' }) {
-    return registerDeviceGeneric({
+  async function loadFromStorage() {
+    if (!observability?.dbReady) return;
+    const rows = await observability.listActivePushDevices();
+    devicesByUser.clear();
+    tokenToOwner.clear();
+    voipDevicesByUser.clear();
+    voipTokenToOwner.clear();
+    for (const row of rows) {
+      if (row.messageToken) {
+        registerDeviceGeneric({
+          userId: row.userId,
+          deviceId: row.deviceId,
+          token: row.messageToken,
+          platform: row.platform,
+          appVersion: row.appVersion,
+          messageProvider: row.messageProvider,
+          now: row.lastSeenAtMs || Date.now(),
+          createdAt: row.createdAtMs || Date.now(),
+          updatedAt: row.updatedAtMs || Date.now(),
+          persist: false,
+          ensureDevices: ensureUserDevices,
+          devicesByUserMap: devicesByUser,
+          tokenToOwnerMap: tokenToOwner,
+        });
+      }
+      if (row.voipToken) {
+        registerDeviceGeneric({
+          userId: row.userId,
+          deviceId: row.deviceId,
+          token: row.voipToken,
+          platform: row.platform,
+          appVersion: row.appVersion,
+          messageProvider: 'apns',
+          now: row.lastSeenAtMs || Date.now(),
+          createdAt: row.createdAtMs || Date.now(),
+          updatedAt: row.updatedAtMs || Date.now(),
+          persist: false,
+          ensureDevices: ensureVoipUserDevices,
+          devicesByUserMap: voipDevicesByUser,
+          tokenToOwnerMap: voipTokenToOwner,
+        });
+      }
+    }
+  }
+
+  async function registerDevice({ userId, deviceId, token, platform, appVersion, messageProvider = 'fcm' }) {
+    const device = registerDeviceGeneric({
       userId,
       deviceId,
       token,
@@ -48,10 +93,22 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
       devicesByUserMap: devicesByUser,
       tokenToOwnerMap: tokenToOwner,
     });
+    if (observability?.dbReady) {
+      await observability.upsertPushDevice({
+        userId,
+        deviceId,
+        messageToken: token,
+        messageProvider,
+        platform,
+        appVersion,
+        maxDevicesPerUser,
+      });
+    }
+    return device;
   }
 
-  function registerVoipDevice({ userId, deviceId, token, platform, appVersion }) {
-    return registerDeviceGeneric({
+  async function registerVoipDevice({ userId, deviceId, token, platform, appVersion }) {
+    const device = registerDeviceGeneric({
       userId,
       deviceId,
       token,
@@ -61,6 +118,17 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
       devicesByUserMap: voipDevicesByUser,
       tokenToOwnerMap: voipTokenToOwner,
     });
+    if (observability?.dbReady) {
+      await observability.upsertPushDevice({
+        userId,
+        deviceId,
+        voipToken: token,
+        platform,
+        appVersion,
+        maxDevicesPerUser,
+      });
+    }
+    return device;
   }
 
   function registerDeviceGeneric({
@@ -73,9 +141,11 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
     ensureDevices,
     devicesByUserMap,
     tokenToOwnerMap,
+    now = Date.now(),
+    createdAt,
+    updatedAt,
   }) {
     const devices = ensureDevices(userId);
-    const now = Date.now();
     const previousOwner = tokenToOwnerMap.get(token);
     if (previousOwner && (previousOwner.userId !== userId || previousOwner.deviceId !== deviceId)) {
       const previousDevices = devicesByUserMap.get(previousOwner.userId);
@@ -110,32 +180,40 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
       messageProvider: messageProvider || 'fcm',
       enabled: true,
       lastSeenAt: now,
-      updatedAt: now,
-      createdAt: existing?.createdAt ?? now,
+      updatedAt: updatedAt ?? now,
+      createdAt: existing?.createdAt ?? createdAt ?? now,
     };
     devices.set(deviceId, device);
     tokenToOwnerMap.set(token, { userId, deviceId });
     return device;
   }
 
-  function unregisterDevice({ userId, deviceId, token }) {
-    return unregisterDeviceGeneric({
+  async function unregisterDevice({ userId, deviceId, token }) {
+    const ok = unregisterDeviceGeneric({
       userId,
       deviceId,
       token,
       devicesByUserMap: devicesByUser,
       tokenToOwnerMap: tokenToOwner,
     });
+    if (ok && observability?.dbReady) {
+      await observability.disablePushDeviceToken({ userId, deviceId, messageToken: token });
+    }
+    return ok;
   }
 
-  function unregisterVoipDevice({ userId, deviceId, token }) {
-    return unregisterDeviceGeneric({
+  async function unregisterVoipDevice({ userId, deviceId, token }) {
+    const ok = unregisterDeviceGeneric({
       userId,
       deviceId,
       token,
       devicesByUserMap: voipDevicesByUser,
       tokenToOwnerMap: voipTokenToOwner,
     });
+    if (ok && observability?.dbReady) {
+      await observability.disablePushDeviceToken({ userId, deviceId, voipToken: token });
+    }
+    return ok;
   }
 
   function unregisterDeviceGeneric({ userId, deviceId, token, devicesByUserMap, tokenToOwnerMap }) {
@@ -216,6 +294,7 @@ export function createDeviceRegistry({ maxDevicesPerUser }) {
     getActiveVoipTokensForUsers,
     getDevice,
     hasActiveVoipTokenForDevice,
+    loadFromStorage,
     listDevicesForUser,
     registerDevice,
     registerVoipDevice,

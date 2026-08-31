@@ -1,12 +1,12 @@
 # PeerLink Push
 
 Push service for PeerLink. Stores device tokens and sends remote push:
-- message/update events via FCM data-only push or APNs background push (auto-selected by server)
+- message/update events via FCM/APNs with server-side access-policy filtering
 - incoming call events via data-only FCM and APNs VoIP (auto-selected by server)
 
 Main runtime file:
 - `push.js`
-- `devices/registry.js` — in-memory message/VoIP device token registry
+- `devices/registry.js` — message/VoIP device token registry backed by Postgres when configured, with in-memory fallback/cache
 - `devices/routes.js` — `/devices/*` route wiring
 - `delivery/dedup-cache.js` — push event deduplication TTL cache
 - `delivery/providers.js` — FCM/APNs provider clients and APNs topic validation
@@ -109,6 +109,33 @@ Signature payload:
 
 `id|from|deviceId|token|ts`
 
+### `POST /devices/access-policy`
+
+Stores the recipient's push filtering snapshot for server-side filtering.
+This lets the push server decide whether `direct_update`/`group_update` may be
+sent as visible iOS alert pushes.
+
+Request body:
+- `id` (required request id)
+- `from` (required, must match `userId`)
+- `ts` (required unix ms)
+- `sig` (required, base64 Ed25519 signature)
+- `signingPub` (required, base64 Ed25519 public key)
+- `userId` / `peerId` (required)
+- `allowMessagesOnlyFromContacts` (boolean)
+- `contactPeerIds` (array)
+- `blockedPeerIds` (array)
+- `policyVersion` (integer, monotonic per user)
+- `updatedAt` (client timestamp)
+- `snapshotHash` (optional idempotency/diagnostic hash)
+
+Signature payload:
+
+`id|from|userId|allowMessagesOnlyFromContacts|contactPeerIdsJson|blockedPeerIdsJson|policyVersion|updatedAt|snapshotHash|ts`
+
+Older clients that do not send this endpoint remain compatible while
+`PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE=allow`.
+
 ### `GET /devices/by-user/:userId`
 
 Returns registered devices for one user.
@@ -144,15 +171,17 @@ Fanout behavior:
   VoIP path only. If the device has no active VoIP token, standard delivery
   remains as a fallback. Android still receives standard FCM data-only call
   invites.
-- For `direct_update` and `group_update` to Android targets, FCM delivery is
-  data-only with high priority; the Android client decides local notification
-  presentation after applying local blocked-peer filtering.
-- For `direct_update` and `group_update` to iOS targets, standard delivery is
-  data-only. FCM targets use APNs `content-available` through FCM; APNS-provider
-  targets use native APNs background delivery (`apns-push-type: background`,
-  `apns-priority: 5`). No remote alert is sent. The iOS app creates a local
-  notification only after its native access-policy gate allows the sender. This
-  is required for blocked/contacts-only filtering before presentation.
+- For `direct_update` and `group_update`, the server checks the recipient's
+  stored access-policy snapshot before fanout: blocked senders are dropped, and
+  contacts-only recipients only allow known contacts.
+- Missing access-policy snapshots are controlled by
+  `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. Default `allow` keeps older clients
+  compatible and sends pushes without the new server-side filter. Future strict
+  deployments can set `drop`.
+- After allow, iOS `direct_update`/`group_update` uses visible alert delivery
+  with APNs priority `10` and `mutable-content: 1`, so iOS can show the push even
+  when the app is suspended. Android message/update delivery remains data-only
+  with high priority.
 - If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
 
 APNs headers used by push service:
@@ -284,6 +313,7 @@ Common write errors:
 - `PUSH_API_TOKEN`
 - `PUSH_DEDUP_TTL_SECONDS` (default `30`)
 - `PUSH_MAX_DEVICES_PER_USER` (default `20`)
+- `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE` (`allow` by default; set `drop` only after client rollout)
 - `PUSH_SIGNATURE_SKEW_SECONDS` (default `120`)
 - `PUSH_SIGNED_ID_TTL_SECONDS` (default `300`)
 - `MODERATION_ADMIN_TOKEN` (admin bearer token for moderator UI/API; falls back to `PUSH_API_TOKEN`)
@@ -390,10 +420,11 @@ Certificate paths on host:
 The push stack includes production monitoring:
 - `push-observability-db` stores observed self-hosted servers from push payloads
 - `push-observability-db` also stores moderation reports, appeals and peer scores
+- `push-observability-db` stores active push devices and access-policy snapshots
 - `server-checker` periodically checks observed relay/signal/TURN endpoints
 - `prometheus` scrapes internal `push:4500/metrics`
 - `grafana` is exposed only on the origin host and provisions an additional
-  moderation dashboard
+  moderation dashboard plus access-policy panels
 
 `/metrics` is intentionally not proxied by the public `push-proxy`.
 
@@ -413,6 +444,18 @@ Moderation tables:
 - `moderation_reports`
 - `moderation_peer_scores`
 - `moderation_appeals`
+
+Push persistence/access-policy tables:
+- `push_devices`
+- `push_user_policy`
+- `push_user_contacts`
+- `push_user_blocked`
+
+Access-policy metrics:
+- `peerlink_push_access_policy_decisions_total`
+- `peerlink_push_access_policy_sync_total`
+- `peerlink_push_access_policy_users`
+- `peerlink_push_access_policy_max_age_seconds`
 
 The moderator UI is exposed only on the origin host:
 

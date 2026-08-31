@@ -41,11 +41,16 @@ export class PushObservability {
     this.deduped = new CounterMap();
     this.registers = new CounterMap();
     this.unregisters = new CounterMap();
+    this.policyDecisions = new CounterMap();
+    this.policySync = new CounterMap();
     this.observedServers = new Map();
     this.moderationReports = new Map();
     this.moderationAppeals = new Map();
     this.moderationPeerPolicies = new Map();
     this.peerIdentityBindings = new Map();
+    this.pushUserPolicies = new Map();
+    this.pushUserContacts = new Map();
+    this.pushUserBlocked = new Map();
   }
 
   async init() {
@@ -80,6 +85,295 @@ export class PushObservability {
 
   recordDeviceUnregister({ platform = 'unknown', messageProvider = 'unknown' } = {}) {
     this.unregisters.inc({ platform, provider: messageProvider });
+  }
+
+  async listActivePushDevices() {
+    if (!this.dbReady) return [];
+    const result = await this.pool.query(
+      `select
+         user_id, device_id, message_token, message_provider, voip_token, platform,
+         app_version, enabled, created_at, updated_at, last_seen_at
+       from push_devices
+       where enabled = true`,
+    );
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      deviceId: row.device_id,
+      messageToken: row.message_token,
+      messageProvider: row.message_provider || 'fcm',
+      voipToken: row.voip_token,
+      platform: row.platform || '',
+      appVersion: row.app_version || '',
+      enabled: row.enabled,
+      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : null,
+      updatedAtMs: row.updated_at ? new Date(row.updated_at).getTime() : null,
+      lastSeenAtMs: row.last_seen_at ? new Date(row.last_seen_at).getTime() : null,
+    }));
+  }
+
+  async upsertPushDevice({
+    userId,
+    deviceId,
+    messageToken = null,
+    messageProvider = null,
+    voipToken = null,
+    platform,
+    appVersion = '',
+    maxDevicesPerUser,
+  }) {
+    if (!this.dbReady) return;
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      if (messageToken) {
+        await client.query(
+          `update push_devices
+           set enabled = false, updated_at = now()
+           where message_token = $1 and (user_id <> $2 or device_id <> $3)`,
+          [messageToken, userId, deviceId],
+        );
+      }
+      if (voipToken) {
+        await client.query(
+          `update push_devices
+           set voip_token = null, updated_at = now()
+           where voip_token = $1 and (user_id <> $2 or device_id <> $3)`,
+          [voipToken, userId, deviceId],
+        );
+      }
+      await client.query(
+        `insert into push_devices
+          (user_id, device_id, message_token, message_provider, voip_token, platform,
+           app_version, enabled, created_at, updated_at, last_seen_at)
+         values ($1, $2, $3, coalesce($4, 'fcm'), $5, $6, $7, true, now(), now(), now())
+         on conflict (user_id, device_id) do update set
+           message_token = coalesce(excluded.message_token, push_devices.message_token),
+           message_provider = coalesce(excluded.message_provider, push_devices.message_provider),
+           voip_token = coalesce(excluded.voip_token, push_devices.voip_token),
+           platform = excluded.platform,
+           app_version = excluded.app_version,
+           enabled = true,
+           updated_at = now(),
+           last_seen_at = now()`,
+        [userId, deviceId, messageToken, messageProvider, voipToken, platform, appVersion],
+      );
+      const limit = Math.max(1, Number.parseInt(String(maxDevicesPerUser || 20), 10));
+      await client.query(
+        `with ranked as (
+           select user_id, device_id,
+             row_number() over (partition by user_id order by last_seen_at desc, updated_at desc) as rn
+           from push_devices
+           where user_id = $1 and enabled = true
+         )
+         update push_devices d
+         set enabled = false, updated_at = now()
+         from ranked r
+         where d.user_id = r.user_id and d.device_id = r.device_id and r.rn > $2`,
+        [userId, limit],
+      );
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async disablePushDeviceToken({ userId, deviceId, messageToken = null, voipToken = null }) {
+    if (!this.dbReady) return;
+    if (messageToken) {
+      await this.pool.query(
+        `update push_devices
+         set enabled = false, updated_at = now()
+         where user_id = $1 and device_id = $2 and message_token = $3`,
+        [userId, deviceId, messageToken],
+      );
+      return;
+    }
+    if (voipToken) {
+      await this.pool.query(
+        `update push_devices
+         set voip_token = null, updated_at = now()
+         where user_id = $1 and device_id = $2 and voip_token = $3`,
+        [userId, deviceId, voipToken],
+      );
+    }
+  }
+
+  normalizePolicyIds(values) {
+    return [...new Set((Array.isArray(values) ? values : [])
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item) => item && item.length <= 128))]
+      .sort();
+  }
+
+  async upsertAccessPolicy({
+    userId,
+    allowMessagesOnlyFromContacts,
+    contactPeerIds,
+    blockedPeerIds,
+    policyVersion,
+    updatedAt,
+    snapshotHash,
+  }) {
+    const contacts = this.normalizePolicyIds(contactPeerIds);
+    const blocked = this.normalizePolicyIds(blockedPeerIds);
+    const version = Number.isFinite(Number(policyVersion)) ? Number(policyVersion) : 0;
+    const clientUpdatedAt = updatedAt ? new Date(updatedAt) : new Date();
+    if (Number.isNaN(clientUpdatedAt.getTime())) {
+      this.policySync.inc({ result: 'failed', reason: 'invalid_updated_at' });
+      return { ok: false, error: 'invalid_updated_at' };
+    }
+    if (this.dbReady) {
+      const current = await this.pool.query(
+        `select policy_version from push_user_policy where user_id = $1`,
+        [userId],
+      );
+      const currentVersion = Number(current.rows[0]?.policy_version ?? -1);
+      if (current.rows[0] && version < currentVersion) {
+        this.policySync.inc({ result: 'stale' });
+        return { ok: true, stale: true, policyVersion: currentVersion };
+      }
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(
+          `insert into push_user_policy
+            (user_id, allow_messages_only_from_contacts, last_policy_sync_at,
+             policy_version, snapshot_hash, updated_at)
+           values ($1, $2, now(), $3, $4, $5)
+           on conflict (user_id) do update set
+             allow_messages_only_from_contacts = excluded.allow_messages_only_from_contacts,
+             last_policy_sync_at = now(),
+             policy_version = excluded.policy_version,
+             snapshot_hash = excluded.snapshot_hash,
+             updated_at = excluded.updated_at`,
+          [userId, Boolean(allowMessagesOnlyFromContacts), version, snapshotHash || '', clientUpdatedAt.toISOString()],
+        );
+        await client.query('delete from push_user_contacts where user_id = $1', [userId]);
+        for (const contactPeerId of contacts) {
+          await client.query(
+            `insert into push_user_contacts (user_id, contact_peer_id, updated_at)
+             values ($1, $2, $3)
+             on conflict (user_id, contact_peer_id) do update set updated_at = excluded.updated_at`,
+            [userId, contactPeerId, clientUpdatedAt.toISOString()],
+          );
+        }
+        await client.query('delete from push_user_blocked where user_id = $1', [userId]);
+        for (const blockedPeerId of blocked) {
+          await client.query(
+            `insert into push_user_blocked (user_id, blocked_peer_id, updated_at)
+             values ($1, $2, $3)
+             on conflict (user_id, blocked_peer_id) do update set updated_at = excluded.updated_at`,
+            [userId, blockedPeerId, clientUpdatedAt.toISOString()],
+          );
+        }
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback');
+        this.policySync.inc({ result: 'failed', reason: 'db_error' });
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else {
+      const current = this.pushUserPolicies.get(userId);
+      if (current && version < Number(current.policyVersion || 0)) {
+        this.policySync.inc({ result: 'stale' });
+        return { ok: true, stale: true, policyVersion: current.policyVersion };
+      }
+    }
+    this.pushUserPolicies.set(userId, {
+      userId,
+      allowMessagesOnlyFromContacts: Boolean(allowMessagesOnlyFromContacts),
+      policyVersion: version,
+      snapshotHash: snapshotHash || '',
+      updatedAt: clientUpdatedAt.toISOString(),
+      lastPolicySyncAt: nowIso(),
+    });
+    this.pushUserContacts.set(userId, new Set(contacts));
+    this.pushUserBlocked.set(userId, new Set(blocked));
+    this.policySync.inc({ result: 'ok' });
+    return { ok: true, stale: false, policyVersion: version, snapshotHash: snapshotHash || '' };
+  }
+
+  async accessPolicyForUser(userId) {
+    if (this.dbReady) {
+      const policy = await this.pool.query(
+        `select * from push_user_policy where user_id = $1`,
+        [userId],
+      );
+      if (!policy.rows[0]) return null;
+      const contacts = await this.pool.query(
+        `select contact_peer_id from push_user_contacts where user_id = $1`,
+        [userId],
+      );
+      const blocked = await this.pool.query(
+        `select blocked_peer_id from push_user_blocked where user_id = $1`,
+        [userId],
+      );
+      return {
+        userId,
+        allowMessagesOnlyFromContacts: Boolean(policy.rows[0].allow_messages_only_from_contacts),
+        contactPeerIds: new Set(contacts.rows.map((row) => row.contact_peer_id)),
+        blockedPeerIds: new Set(blocked.rows.map((row) => row.blocked_peer_id)),
+        policyVersion: Number(policy.rows[0].policy_version || 0),
+        snapshotHash: policy.rows[0].snapshot_hash || '',
+        updatedAt: policy.rows[0].updated_at,
+        lastPolicySyncAt: policy.rows[0].last_policy_sync_at,
+      };
+    }
+    const policy = this.pushUserPolicies.get(userId);
+    if (!policy) return null;
+    return {
+      ...policy,
+      contactPeerIds: this.pushUserContacts.get(userId) || new Set(),
+      blockedPeerIds: this.pushUserBlocked.get(userId) || new Set(),
+    };
+  }
+
+  async decideAccessPolicy({ recipientUserId, senderUserId, missingSnapshotMode = 'allow' }) {
+    const policy = await this.accessPolicyForUser(recipientUserId);
+    if (!policy) {
+      const allowed = missingSnapshotMode !== 'drop';
+      this.policyDecisions.inc({
+        decision: allowed ? 'allow_missing_snapshot' : 'drop_missing_snapshot',
+      });
+      return { allowed, reason: 'missing_snapshot' };
+    }
+    if (policy.blockedPeerIds.has(senderUserId)) {
+      this.policyDecisions.inc({ decision: 'drop_blocked' });
+      return { allowed: false, reason: 'blocked' };
+    }
+    if (!policy.allowMessagesOnlyFromContacts) {
+      this.policyDecisions.inc({ decision: 'allow' });
+      return { allowed: true, reason: 'allow_all' };
+    }
+    if (policy.contactPeerIds.has(senderUserId)) {
+      this.policyDecisions.inc({ decision: 'allow' });
+      return { allowed: true, reason: 'contact' };
+    }
+    this.policyDecisions.inc({ decision: 'drop_not_contact' });
+    return { allowed: false, reason: 'not_contact' };
+  }
+
+  async filterByAccessPolicy({ senderUserId, recipientUserIds, missingSnapshotMode = 'allow' }) {
+    const allowed = [];
+    const dropped = [];
+    for (const recipientUserId of recipientUserIds) {
+      const decision = await this.decideAccessPolicy({
+        recipientUserId,
+        senderUserId,
+        missingSnapshotMode,
+      });
+      if (decision.allowed) {
+        allowed.push(recipientUserId);
+      } else {
+        dropped.push({ userId: recipientUserId, reason: decision.reason });
+      }
+    }
+    return { allowed, dropped };
   }
 
   async peerIdentityBinding(peerId) {
@@ -656,6 +950,8 @@ export class PushObservability {
         deduped: this.deduped,
         registers: this.registers,
         unregisters: this.unregisters,
+        policyDecisions: this.policyDecisions,
+        policySync: this.policySync,
       },
       observedServersSize: this.observedServers.size,
       dbReady: this.dbReady,
@@ -784,6 +1080,53 @@ create table if not exists peer_identity_bindings (
   last_seen_at timestamptz not null default now()
 );
 
+create table if not exists push_devices (
+  user_id text not null,
+  device_id text not null,
+  message_token text,
+  message_provider text not null default 'fcm',
+  voip_token text,
+  platform text not null,
+  app_version text not null default '',
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  primary key (user_id, device_id)
+);
+
+alter table push_devices
+  add column if not exists message_provider text not null default 'fcm',
+  add column if not exists voip_token text,
+  add column if not exists app_version text not null default '',
+  add column if not exists enabled boolean not null default true,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now(),
+  add column if not exists last_seen_at timestamptz not null default now();
+
+create table if not exists push_user_policy (
+  user_id text primary key,
+  allow_messages_only_from_contacts boolean not null default false,
+  last_policy_sync_at timestamptz,
+  policy_version bigint not null default 0,
+  snapshot_hash text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists push_user_contacts (
+  user_id text not null references push_user_policy(user_id) on delete cascade,
+  contact_peer_id text not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, contact_peer_id)
+);
+
+create table if not exists push_user_blocked (
+  user_id text not null references push_user_policy(user_id) on delete cascade,
+  blocked_peer_id text not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, blocked_peer_id)
+);
+
 create index if not exists observed_servers_status_idx on observed_servers(status);
 create index if not exists observed_servers_last_seen_idx on observed_servers(last_seen_at desc);
 create index if not exists server_observations_server_time_idx on server_observations(server_id, observed_at desc);
@@ -793,4 +1136,10 @@ create index if not exists moderation_reports_reported_peer_idx on moderation_re
 create index if not exists moderation_peer_scores_state_idx on moderation_peer_scores(policy_state, report_count desc);
 create index if not exists moderation_appeals_peer_idx on moderation_appeals(peer_id, created_at desc);
 create index if not exists peer_identity_bindings_signing_pub_idx on peer_identity_bindings(signing_pub);
+create index if not exists push_devices_enabled_user_idx on push_devices(enabled, user_id);
+create unique index if not exists push_devices_message_token_idx on push_devices(message_token) where message_token is not null and enabled = true;
+create unique index if not exists push_devices_voip_token_idx on push_devices(voip_token) where voip_token is not null and enabled = true;
+create index if not exists push_user_policy_last_sync_idx on push_user_policy(last_policy_sync_at desc);
+create index if not exists push_user_contacts_contact_idx on push_user_contacts(contact_peer_id);
+create index if not exists push_user_blocked_blocked_idx on push_user_blocked(blocked_peer_id);
 `;

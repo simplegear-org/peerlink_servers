@@ -80,6 +80,7 @@ File: `push.js`
 Internal push-delivery service for FCM/APNs:
 - `POST /send`
 - `POST /devices/register`
+- `POST /devices/access-policy`
 - `POST /devices/unregister`
 - `GET /devices/by-user/:userId`
 - `POST /events/push`
@@ -99,11 +100,13 @@ Push write contract:
   enabled and the exact target device has an active `voipToken`, so CallKit is
   driven by the VoIP path only; devices without an active VoIP token keep
   standard delivery as fallback,
-- Android and iOS `direct_update`/`group_update` delivery is data-only. iOS
-  message updates use APNs `content-available` without a remote alert; native
-  APNS-provider targets are sent as `apns-push-type: background` with priority
-  `5`. The app creates the local notification only after its native access-policy
-  gate allows the sender,
+- `direct_update`/`group_update` is filtered server-side from the recipient's
+  access-policy snapshot. Missing snapshots default to compatibility mode
+  (`PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE=allow`) so older clients still
+  receive pushes without the new filter,
+- after allow, iOS `direct_update`/`group_update` uses alert delivery with APNs
+  priority `10` and `mutable-content: 1`; Android message/update remains
+  data-only with high priority,
 - when `notification.title/body` is omitted, standard delivery is silent/data-only. Android `call_invite` uses this path so the client can decide foreground/fullscreen presentation.
 
 ### coturn

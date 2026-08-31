@@ -90,6 +90,12 @@ export async function buildPushMetrics({
     '# HELP peerlink_push_deduped_total Push events deduped.',
     '# TYPE peerlink_push_deduped_total counter',
     ...counters.deduped.lines('peerlink_push_deduped_total'),
+    '# HELP peerlink_push_access_policy_decisions_total Access-policy allow/drop decisions.',
+    '# TYPE peerlink_push_access_policy_decisions_total counter',
+    ...counters.policyDecisions.lines('peerlink_push_access_policy_decisions_total'),
+    '# HELP peerlink_push_access_policy_sync_total Access-policy sync results.',
+    '# TYPE peerlink_push_access_policy_sync_total counter',
+    ...counters.policySync.lines('peerlink_push_access_policy_sync_total'),
     '# HELP peerlink_observed_servers_total Servers observed in push payloads.',
     '# TYPE peerlink_observed_servers_total gauge',
     metricLine('peerlink_observed_servers_total', {}, observedServersSize),
@@ -135,6 +141,26 @@ export async function buildPushMetrics({
       lines.push(metricLine('peerlink_moderation_reports', { state: 'total' }, moderationRow.total || 0));
       lines.push(metricLine('peerlink_moderation_reports', { state: 'pending' }, moderationRow.pending || 0));
       lines.push(metricLine('peerlink_moderation_reports', { state: 'processed' }, moderationRow.processed || 0));
+      const policies = await pool.query(
+        `select
+           (select count(distinct user_id)::int from push_devices where enabled = true) as active_users,
+           count(*)::int as snapshot_users,
+           count(*) filter (where last_policy_sync_at is null)::int as missing_sync_at,
+           coalesce(extract(epoch from max(now() - last_policy_sync_at))::int, 0) as max_age_seconds
+         from push_user_policy`,
+      );
+      const policyRow = policies.rows[0] || {};
+      const activeUsers = Number(policyRow.active_users || 0);
+      const snapshotUsers = Number(policyRow.snapshot_users || 0);
+      lines.push('# HELP peerlink_push_access_policy_users Users by access-policy snapshot state.');
+      lines.push('# TYPE peerlink_push_access_policy_users gauge');
+      lines.push(metricLine('peerlink_push_access_policy_users', { state: 'active' }, activeUsers));
+      lines.push(metricLine('peerlink_push_access_policy_users', { state: 'with_snapshot' }, snapshotUsers));
+      lines.push(metricLine('peerlink_push_access_policy_users', { state: 'without_snapshot' }, Math.max(0, activeUsers - snapshotUsers)));
+      lines.push(metricLine('peerlink_push_access_policy_users', { state: 'missing_sync_at' }, policyRow.missing_sync_at || 0));
+      lines.push('# HELP peerlink_push_access_policy_max_age_seconds Maximum age of latest access-policy sync.');
+      lines.push('# TYPE peerlink_push_access_policy_max_age_seconds gauge');
+      lines.push(metricLine('peerlink_push_access_policy_max_age_seconds', {}, policyRow.max_age_seconds || 0));
     } catch (_) {
       lines.push(metricLine('peerlink_push_observability_postgres_query_error', {}, 1));
     }
