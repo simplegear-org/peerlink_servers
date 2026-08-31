@@ -6,6 +6,7 @@ import { sourceInfo } from './source-info.js';
 import { PushObservability } from './observability.js';
 import {
   createDeviceRegistry,
+  shouldInvalidateMessageToken,
   shouldInvalidateVoipToken,
 } from './devices/registry.js';
 import { registerDeviceRoutes } from './devices/routes.js';
@@ -1040,6 +1041,21 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         `[push] standard send failed sender=${senderUserId} userId=${target.userId} deviceId=${target.deviceId}:`,
         error instanceof Error ? error.message : String(error),
       );
+      if (shouldInvalidateMessageToken(error)) {
+        const invalidated = await deviceRegistry.unregisterDevice({
+          userId: target.userId,
+          deviceId: target.deviceId,
+          token: target.token,
+        });
+        console.warn('[push][event][message_invalidate]', {
+          userId: target.userId,
+          deviceId: target.deviceId,
+          provider: (target.messageProvider || 'fcm').toLowerCase(),
+          tokenTail: target.token.slice(-8),
+          invalidated,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
   let voipSent = 0;

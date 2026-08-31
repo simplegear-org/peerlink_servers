@@ -309,3 +309,14 @@ export function shouldInvalidateVoipToken(error) {
   return message.includes('"reason":"BadDeviceToken"')
     || message.includes('"reason":"Unregistered"');
 }
+
+export function shouldInvalidateMessageToken(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('"reason":"BadDeviceToken"')
+    || message.includes('"reason":"Unregistered"')
+    || message.includes('"errorCode":"UNREGISTERED"')
+    || message.includes('"errorCode": "UNREGISTERED"')
+    || message.includes('The registration token is not a valid FCM registration token')
+    || (message.includes('"field":"message.token"') && message.includes('"errorCode":"INVALID_ARGUMENT"'))
+    || (message.includes('"field": "message.token"') && message.includes('"errorCode": "INVALID_ARGUMENT"'));
+}
