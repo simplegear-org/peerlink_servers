@@ -284,9 +284,10 @@ calls stay blocked until `unban`.
 - Set `PUSH_API_TOKEN` and call with `Authorization: Bearer <token>`.
 - Set `MODERATION_ADMIN_TOKEN` for moderator UI/admin endpoints. If omitted,
   admin moderation endpoints use `PUSH_API_TOKEN`.
-- Write endpoints `/devices/register`, `/devices/unregister`, `/events/push`
-  require Ed25519 signature (`id`, `from`, `ts`, `sig`, `signingPub`) and replay
-  protection by request id TTL cache.
+- Write endpoints `/devices/register`, `/devices/access-policy`,
+  `/devices/unregister`, and `/events/push` require Ed25519 signature (`id`,
+  `from`, `ts`, `sig`, `signingPub`) and replay protection by request id TTL
+  cache.
 - `push.js` wires route-level security checks through
   `security/signed-requests.js`; replay state is kept in that module and exposed
   to health/metrics as cache size.
@@ -524,7 +525,8 @@ In this mode `deploy-push.sh` skips the direct DNS-to-origin check because proxi
 ## Recommended integration
 
 Use `app/backend -> push` integration:
-- app/backend calls `/devices/register` and `/devices/unregister`
+- app/backend calls `/devices/register`, `/devices/access-policy`, and
+  `/devices/unregister`
 - app/backend emits `/events/push` for message, account, group, and call events
 - push service fanouts FCM/APNs pushes to registered recipient devices
 

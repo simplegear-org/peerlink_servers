@@ -316,6 +316,17 @@ write_push_locations() {
         proxy_read_timeout 60s;
     }
 
+    location = /devices/access-policy {
+        limit_except POST { deny all; }
+        proxy_pass http://push:4500/devices/access-policy;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
     location = /devices/unregister {
         limit_except POST { deny all; }
         proxy_pass http://push:4500/devices/unregister;
