@@ -81,6 +81,10 @@ const deviceRegistry = createDeviceRegistry({
   observability,
 });
 await deviceRegistry.loadFromStorage();
+console.log('[push][devices][restore]', {
+  dbReady: observability.dbReady,
+  ...deviceRegistry.stats(),
+});
 const signedRequests = createSignedRequestVerifier({
   skewSeconds: SIGNATURE_SKEW_SECONDS,
   signedIdTtlSeconds: SIGNED_ID_TTL_SECONDS,
@@ -825,7 +829,8 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       bannedRecipients: moderationAllowedRecipients.banned,
     });
   }
-  const isAccessFilteredEvent = payload.type === 'direct_update' || payload.type === 'group_update';
+  const isAccessFilteredEvent =
+    payload.type === 'direct_update' || payload.type === 'group_update' || payload.type === 'call_invite';
   const accessAllowedRecipients = isAccessFilteredEvent
     ? await observability.filterByAccessPolicy({
         senderUserId,
@@ -890,6 +895,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const platform = (target.platform || '').toLowerCase();
       const isCallInvite = payload.type === 'call_invite';
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
+      const isAccessFilteredTarget = isMessageUpdate || isCallInvite;
       const isAndroidTarget = platform === 'android';
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
@@ -903,7 +909,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
           }
         : notification;
       const hasNotificationText = Boolean(effectiveNotification?.title || effectiveNotification?.body);
-      const targetPolicy = isMessageUpdate
+      const targetPolicy = isAccessFilteredTarget
         ? await observability.decideAccessPolicy({
             recipientUserId: target.userId,
             senderUserId,

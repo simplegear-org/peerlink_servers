@@ -100,8 +100,8 @@ Push write contract:
   enabled and the exact target device has an active `voipToken`, so CallKit is
   driven by the VoIP path only; devices without an active VoIP token keep
   standard delivery as fallback,
-- `direct_update`/`group_update` is filtered server-side from the recipient's
-  access-policy snapshot. Missing snapshots default to compatibility mode
+- `direct_update`/`group_update` and `call_invite` are filtered server-side from
+  the recipient's access-policy snapshot. Missing snapshots default to compatibility mode
   (`PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE=allow`) so older clients still
   receive pushes without the new filter,
 - after allow, iOS `direct_update`/`group_update` uses alert delivery with APNs

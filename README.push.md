@@ -171,9 +171,9 @@ Fanout behavior:
   VoIP path only. If the device has no active VoIP token, standard delivery
   remains as a fallback. Android still receives standard FCM data-only call
   invites.
-- For `direct_update` and `group_update`, the server checks the recipient's
-  stored access-policy snapshot before fanout: blocked senders are dropped, and
-  contacts-only recipients only allow known contacts.
+- For `direct_update`, `group_update`, and `call_invite`, the server checks the
+  recipient's stored access-policy snapshot before fanout: blocked senders are
+  dropped, and contacts-only recipients only allow known contacts.
 - Missing access-policy snapshots are controlled by
   `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. Default `allow` keeps older clients
   compatible and sends pushes without the new server-side filter. Future strict

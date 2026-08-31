@@ -154,7 +154,7 @@ Security-логика push разнесена по отдельным модул
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
 - Для `call_invite` на iOS/macOS standard FCM/APNs delivery пропускается только если включен `delivery.voip`, настроен APNs VoIP topic и у конкретного устройства есть активный `voipToken`; CallKit должен запускаться через VoIP path. Если у устройства нет активного VoIP-токена, standard delivery остается fallback. Android продолжает получать `call_invite` через standard FCM data-only.
-- Для `direct_update`/`group_update` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`.
+- Для `direct_update`/`group_update` и `call_invite` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`.
 - При отсутствии access-policy snapshot режим задает `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. По умолчанию `allow`, чтобы старые клиенты оставались совместимыми и получали push без новой серверной фильтрации. После rollout клиентов можно включить `drop`.
 - Диагностика access-policy пишется в stdout:
   - `[push][access-policy]` после sync snapshot: `userId`, `policyVersion`, `contactsCount`, `blockedCount`, `snapshotHash`, результат.
