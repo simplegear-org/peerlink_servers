@@ -51,7 +51,11 @@ export function createDeviceRegistry({ maxDevicesPerUser, observability = null }
           token: row.messageToken,
           platform: row.platform,
           appVersion: row.appVersion,
-          messageProvider: row.messageProvider,
+          messageProvider: normalizeMessageProviderForToken({
+            platform: row.platform,
+            provider: row.messageProvider,
+            token: row.messageToken,
+          }),
           now: row.lastSeenAtMs || Date.now(),
           createdAt: row.createdAtMs || Date.now(),
           updatedAt: row.updatedAtMs || Date.now(),
@@ -82,13 +86,18 @@ export function createDeviceRegistry({ maxDevicesPerUser, observability = null }
   }
 
   async function registerDevice({ userId, deviceId, token, platform, appVersion, messageProvider = 'fcm' }) {
+    const normalizedProvider = normalizeMessageProviderForToken({
+      platform,
+      provider: messageProvider,
+      token,
+    });
     const device = registerDeviceGeneric({
       userId,
       deviceId,
       token,
       platform,
       appVersion,
-      messageProvider,
+      messageProvider: normalizedProvider,
       ensureDevices: ensureUserDevices,
       devicesByUserMap: devicesByUser,
       tokenToOwnerMap: tokenToOwner,
@@ -98,7 +107,7 @@ export function createDeviceRegistry({ maxDevicesPerUser, observability = null }
         userId,
         deviceId,
         messageToken: token,
-        messageProvider,
+        messageProvider: normalizedProvider,
         platform,
         appVersion,
         maxDevicesPerUser,
@@ -308,6 +317,25 @@ export function shouldInvalidateVoipToken(error) {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('"reason":"BadDeviceToken"')
     || message.includes('"reason":"Unregistered"');
+}
+
+export function looksLikeApnsDeviceToken(token) {
+  return typeof token === 'string' && /^[0-9a-f]{64}$/i.test(token.trim());
+}
+
+export function normalizeMessageProviderForToken({ platform, provider, token }) {
+  const normalizedProvider = typeof provider === 'string' && provider.trim()
+    ? provider.trim().toLowerCase()
+    : 'fcm';
+  const normalizedPlatform = typeof platform === 'string' ? platform.trim().toLowerCase() : '';
+  if (
+    normalizedProvider === 'fcm' &&
+    (normalizedPlatform === 'ios' || normalizedPlatform === 'macos') &&
+    looksLikeApnsDeviceToken(token)
+  ) {
+    return 'apns';
+  }
+  return normalizedProvider;
 }
 
 export function shouldInvalidateMessageToken(error) {

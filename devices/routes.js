@@ -24,7 +24,7 @@ export function registerDeviceRoutes({
     const deviceId = normalizeDeviceId(req.body?.deviceId);
     const messageToken = normalizeStringValue(req.body?.messageToken, 4096)
       || normalizeTokenInput(req.body?.token);
-    const messageProvider = normalizeStringValue(req.body?.messageProvider, 16)?.toLowerCase() || 'fcm';
+    const requestedMessageProvider = normalizeStringValue(req.body?.messageProvider, 16)?.toLowerCase() || 'fcm';
     const voipToken = normalizeVoipTokenInput(req.body?.voipToken);
     const platform = normalizePlatform(req.body?.platform);
     const appVersion = normalizeStringValue(req.body?.appVersion, 64) || '';
@@ -49,7 +49,7 @@ export function registerDeviceRoutes({
       userId,
       deviceId,
       platform,
-      messageProvider,
+      messageProvider: requestedMessageProvider,
       appVersion,
       tokenTail: messageToken.slice(-8),
       voipTokenTail: voipToken ? voipToken.slice(-8) : null,
@@ -62,7 +62,7 @@ export function registerDeviceRoutes({
       token: messageToken,
       platform,
       appVersion,
-      messageProvider,
+      messageProvider: requestedMessageProvider,
     });
     if (voipToken) {
       await deviceRegistry.registerVoipDevice({
@@ -73,7 +73,7 @@ export function registerDeviceRoutes({
         appVersion,
       });
     }
-    observability.recordDeviceRegister({ platform, messageProvider });
+    observability.recordDeviceRegister({ platform, messageProvider: device.messageProvider });
     return res.json({
       ok: true,
       device: deviceRegistry.devicePublicView(device),

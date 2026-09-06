@@ -142,6 +142,14 @@ alter table push_devices
   add column if not exists updated_at timestamptz not null default now(),
   add column if not exists last_seen_at timestamptz not null default now();
 
+update push_devices
+set message_provider = 'apns',
+    message_token = lower(message_token),
+    updated_at = now()
+where message_provider = 'fcm'
+  and lower(platform) in ('ios', 'macos')
+  and message_token ~* '^[0-9a-f]{64}$';
+
 create table if not exists push_user_policy (
   user_id text primary key,
   allow_messages_only_from_contacts boolean not null default false,
