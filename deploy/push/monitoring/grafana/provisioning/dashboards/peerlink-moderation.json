@@ -1,0 +1,145 @@
+{
+  "uid": "peerlink-moderation",
+  "title": "PeerLink X Moderation",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Reports",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select count(*)::int as value from moderation_reports",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Processed",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select count(*)::int as value from moderation_reports where status in ('resolved', 'rejected')",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Remaining",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select count(*)::int as value from moderation_reports where status = 'pending'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Warned Peers",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select count(*)::int as value from moderation_peer_scores where policy_state = 'warning'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Banned Peers",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select count(*)::int as value from moderation_peer_scores where policy_state = 'banned'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Reports Per Hour",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "time_series",
+          "rawSql": "select date_trunc('hour', received_at) as time, reason as metric, count(*)::int as value from moderation_reports where $__timeFilter(received_at) group by 1, 2 order by 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Reports By Status",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select status, count(*)::int as reports from moderation_reports group by status order by reports desc",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Peer Scores",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select peer_id, report_count, pending_count, processed_count, appealed_count, policy_state, warning_issued_at, banned_at, last_report_at from moderation_peer_scores order by report_count desc, last_report_at desc nulls last limit 500",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          { "displayName": "report_count", "desc": true }
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Latest Reports",
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "peerlink-observability-db" },
+          "format": "table",
+          "rawSql": "select received_at, reported_peer_id, reporter_peer_id, reason, status, content_encrypted, action, action_at from moderation_reports order by received_at desc limit 200",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

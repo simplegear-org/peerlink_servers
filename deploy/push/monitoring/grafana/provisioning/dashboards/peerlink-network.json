@@ -1,0 +1,752 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Servers Total",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Healthy",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers where status = 'healthy'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Degraded",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers where status = 'degraded'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Offline",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers where status in ('dead','blocked')",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "New Servers / 24h",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers where first_seen_at >= now() - interval '24 hours'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "New Servers / 7d",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select count(*) from observed_servers where first_seen_at >= now() - interval '7 days'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Activity",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Messages by Server",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "with ranked as (select server_id, sum(message_count + call_count) as total_events from server_usage_hourly where bucket_at >= now() - interval '7 days' group by server_id order by total_events desc limit 10) select u.bucket_at as time, s.normalized_url as metric, sum(u.message_count) as value from server_usage_hourly u join observed_servers s on s.id = u.server_id join ranked r on r.server_id = u.server_id where $__timeFilter(u.bucket_at) group by 1,2 order by 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Calls by Server",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "with ranked as (select server_id, sum(message_count + call_count) as total_events from server_usage_hourly where bucket_at >= now() - interval '7 days' group by server_id order by total_events desc limit 10) select u.bucket_at as time, s.normalized_url as metric, sum(u.call_count) as value from server_usage_hourly u join observed_servers s on s.id = u.server_id join ranked r on r.server_id = u.server_id where $__timeFilter(u.bucket_at) group by 1,2 order by 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Server Details",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Selected Server",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select normalized_url, status, first_seen_at, last_seen_at, seen_count, message_seen_count, call_seen_count, last_check_latency_ms, last_error from observed_servers s where (${server:sqlstring} = '$__all' or s.normalized_url = ${server:sqlstring}) order by normalized_url limit 100",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Selected Server Messages",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select u.bucket_at as time, s.normalized_url as metric, sum(u.message_count) as value from server_usage_hourly u join observed_servers s on s.id = u.server_id where $__timeFilter(u.bucket_at) and (${server:sqlstring} = '$__all' or s.normalized_url = ${server:sqlstring}) group by 1,2 order by 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Selected Server Calls",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select u.bucket_at as time, s.normalized_url as metric, sum(u.call_count) as value from server_usage_hourly u join observed_servers s on s.id = u.server_id where $__timeFilter(u.bucket_at) and (${server:sqlstring} = '$__all' or s.normalized_url = ${server:sqlstring}) group by 1,2 order by 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Checker Latency",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select c.checked_at as time, s.normalized_url as metric, c.latency_ms as value from server_checks c join observed_servers s on s.id = c.server_id where $__timeFilter(c.checked_at) and (${server:sqlstring} = '$__all' or s.normalized_url = ${server:sqlstring}) order by 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Check Failures",
+      "datasource": {
+        "type": "postgres",
+        "uid": "peerlink-observability-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "peerlink-observability-db"
+          },
+          "rawSql": "select c.checked_at as time, s.normalized_url as metric, case when c.status in ('healthy','degraded') then 0 else 1 end as value from server_checks c join observed_servers s on s.id = c.server_id where $__timeFilter(c.checked_at) and (${server:sqlstring} = '$__all' or s.normalized_url = ${server:sqlstring}) order by 1",
+          "format": "time_series"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 40,
+  "style": "dark",
+  "tags": [
+    "peerlink"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "peerlink-observability-db"
+        },
+        "definition": "SELECT normalized_url FROM observed_servers ORDER BY normalized_url",
+        "includeAll": true,
+        "label": "server",
+        "multi": false,
+        "name": "server",
+        "options": [],
+        "query": "SELECT normalized_url FROM observed_servers ORDER BY normalized_url",
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "15s",
+      "30s",
+      "1m",
+      "5m"
+    ],
+    "time_options": [
+      "6h",
+      "24h",
+      "7d",
+      "30d",
+      "90d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "PeerLink Network",
+  "uid": "peerlink-network",
+  "version": 1,
+  "weekStart": ""
+}
