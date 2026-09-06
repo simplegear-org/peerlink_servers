@@ -109,6 +109,20 @@ const notifyModerationPolicy = createModerationPolicyNotifier({
   signModerationStatus,
 });
 
+async function measurePushDelivery({ payload, deliveryName, provider }, send) {
+  const startedAt = Date.now();
+  try {
+    return await send();
+  } finally {
+    observability.recordPushDeliveryDuration({
+      payload,
+      deliveryName,
+      provider,
+      durationSeconds: (Date.now() - startedAt) / 1000,
+    });
+  }
+}
+
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -751,12 +765,15 @@ app.post('/send', requireAuth, async (req, res) => {
   }
   observability.recordPushEvent({ payload: body.data, delivery: { standard: true, voip: false } });
   try {
-    const result = await pushProviders.sendFcm({
-      token,
-      data: body.data,
-      notification: body.notification,
-      android: body.android,
-    });
+    const result = await measurePushDelivery(
+      { payload: body.data, deliveryName: 'standard', provider: 'fcm' },
+      () => pushProviders.sendFcm({
+        token,
+        data: body.data,
+        notification: body.notification,
+        android: body.android,
+      }),
+    );
     observability.recordPushResult({
       payload: body.data,
       deliveryName: 'standard',
@@ -940,82 +957,88 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         if (!apnsTopic) {
           throw new Error('apns messages topic is not configured');
         }
-        await pushProviders.sendApnsAlert({
-          token: target.token,
-          topic: apnsTopic,
-          payload: {
-            aps: {
-              ...(hasNotificationText || useIosAlertMessagePush
-                ? {
-                    alert: {
-                      ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
-                      ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
-                    },
-                    sound: 'default',
-                    badge: 1,
-                    'mutable-content': 1,
-                  }
-                : {
-                    'content-available': 1,
-                  }),
-            },
-            ...payload,
-          },
-        });
-      } else {
-        await pushProviders.sendFcm({
-          token: target.token,
-          ...(hasNotificationText && !useNativeMessageFilter
-            ? {
-                notification: {
-                  ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
-                  ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
-                },
-                ...(isMessageUpdate
+        await measurePushDelivery(
+          { payload, deliveryName: 'standard', provider },
+          () => pushProviders.sendApnsAlert({
+            token: target.token,
+            topic: apnsTopic,
+            payload: {
+              aps: {
+                ...(hasNotificationText || useIosAlertMessagePush
                   ? {
-                      apns: {
-                        mutableContent: true,
+                      alert: {
+                        ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                        ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
                       },
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(!hasNotificationText || (isMessageUpdate && isAndroidTarget)
-            ? {
-                android: {
-                  priority: 'HIGH',
-                },
-              }
-            : {}),
-          ...(useIosAlertMessagePush
-            ? {
-                apns: {
-                  headers: {
-                    'apns-push-type': 'alert',
-                    'apns-priority': '10',
-                  },
-                  payload: {
-                    aps: {
-                      ...(hasNotificationText
-                        ? {
-                            alert: {
-                              ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
-                              ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
-                            },
-                            sound: 'default',
-                            badge: 1,
-                          }
-                        : {}),
+                      sound: 'default',
+                      badge: 1,
                       'mutable-content': 1,
+                    }
+                  : {
+                      'content-available': 1,
+                    }),
+              },
+              ...payload,
+            },
+          }),
+        );
+      } else {
+        await measurePushDelivery(
+          { payload, deliveryName: 'standard', provider },
+          () => pushProviders.sendFcm({
+            token: target.token,
+            ...(hasNotificationText && !useNativeMessageFilter
+              ? {
+                  notification: {
+                    ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                    ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
+                  },
+                  ...(isMessageUpdate
+                    ? {
+                        apns: {
+                          mutableContent: true,
+                        },
+                      }
+                    : {}),
+                }
+              : {}),
+            ...(!hasNotificationText || (isMessageUpdate && isAndroidTarget)
+              ? {
+                  android: {
+                    priority: 'HIGH',
+                  },
+                }
+              : {}),
+            ...(useIosAlertMessagePush
+              ? {
+                  apns: {
+                    headers: {
+                      'apns-push-type': 'alert',
+                      'apns-priority': '10',
+                    },
+                    payload: {
+                      aps: {
+                        ...(hasNotificationText
+                          ? {
+                              alert: {
+                                ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                                ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
+                              },
+                              sound: 'default',
+                              badge: 1,
+                            }
+                          : {}),
+                        'mutable-content': 1,
+                      },
                     },
                   },
-                },
-            }
-            : {}),
-          data: {
-            ...payload,
-          },
-        });
+              }
+              : {}),
+            data: {
+              ...payload,
+            },
+          }),
+        );
       }
       standardSent += 1;
       observability.recordPushResult({
@@ -1063,16 +1086,19 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   if (voipTopic) {
     for (const target of voipTargets) {
       try {
-        await pushProviders.sendApnsVoip({
-          token: target.token,
-          topic: voipTopic,
-          payload: {
-            aps: {
-              'content-available': 1,
+        await measurePushDelivery(
+          { payload, deliveryName: 'voip', provider: 'apns' },
+          () => pushProviders.sendApnsVoip({
+            token: target.token,
+            topic: voipTopic,
+            payload: {
+              aps: {
+                'content-available': 1,
+              },
+              ...payload,
             },
-            ...payload,
-          },
-        });
+          }),
+        );
         voipSent += 1;
         observability.recordPushResult({
           payload,

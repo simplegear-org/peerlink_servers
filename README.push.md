@@ -424,18 +424,34 @@ Certificate paths on host:
 - `deploy/push/letsencrypt/live/<PUSH_PUBLIC_HOST>/fullchain.pem`
 - `deploy/push/letsencrypt/live/<PUSH_PUBLIC_HOST>/privkey.pem`
 
-## Observability
+## Monitoring and Analytics
 
-The push stack includes production monitoring:
+The push stack separates product analytics from push infrastructure telemetry:
 - `push-observability-db` stores observed self-hosted servers from push payloads
 - `push-observability-db` also stores moderation reports, appeals and peer scores
 - `push-observability-db` stores active push devices and access-policy snapshots
+- `push-observability-db` stores `product_event_hourly` for logical message,
+  group and call events
 - `server-checker` periodically checks observed relay/signal/TURN endpoints
 - `prometheus` scrapes internal `push:4500/metrics`
-- `grafana` is exposed only on the origin host and provisions an additional
-  moderation dashboard plus access-policy panels
+- `grafana` is exposed only on the origin host and provisions dashboards in the
+  `PeerLink` folder
 
 `/metrics` is intentionally not proxied by the public `push-proxy`.
+
+Grafana dashboards:
+- `PeerLink Overview` uses PostgreSQL for persistent users, new users, known
+  servers, new servers and logical message/call event trends. It uses
+  Prometheus only for current push success.
+- `PeerLink Push Health` uses Prometheus for delivery rates, APNS/FCM split,
+  failures, latency histogram quantiles, dedup/replay cache size, Postgres
+  health, access-policy telemetry and call/VoIP push health.
+- `PeerLink Network` uses PostgreSQL for server totals, health, top server
+  activity, per-server details, checker latency and check failures.
+
+Grafana and Prometheus are bound to localhost on the origin host:
+- Grafana: `http://127.0.0.1:3001`
+- Prometheus: `http://127.0.0.1:9090`
 
 New environment variables:
 - `PUSH_OBSERVABILITY_POSTGRES_PASSWORD`
@@ -449,6 +465,15 @@ Observed servers are extracted from `payload.servers`, `signalServers`,
 The database keeps per-server usage counters for message/group events, calls,
 checker status, and checker latency.
 
+Logical product event semantics:
+- `direct_update` and other direct/message types become `message`
+- `group_update` becomes `group`
+- `call_invite` and other call types become `call`
+
+Prometheus counters reset when the `push` process restarts. PostgreSQL-backed
+users, known servers, logical product events, server observations and checker
+history persist across push restarts.
+
 Moderation tables:
 - `moderation_reports`
 - `moderation_peer_scores`
@@ -456,6 +481,7 @@ Moderation tables:
 
 Push persistence/access-policy tables:
 - `push_devices`
+- `product_event_hourly`
 - `push_user_policy`
 - `push_user_contacts`
 - `push_user_blocked`
@@ -465,6 +491,11 @@ Access-policy metrics:
 - `peerlink_push_access_policy_sync_total`
 - `peerlink_push_access_policy_users`
 - `peerlink_push_access_policy_max_age_seconds`
+
+Delivery latency metric:
+- `peerlink_push_delivery_duration_seconds_bucket`
+- `peerlink_push_delivery_duration_seconds_sum`
+- `peerlink_push_delivery_duration_seconds_count`
 
 Access-policy stdout diagnostics:
 - `[push][access-policy]` logs accepted/stale snapshot sync without full peer

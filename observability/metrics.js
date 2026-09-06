@@ -27,6 +27,44 @@ export class CounterMap {
   }
 }
 
+export class HistogramMap {
+  constructor({ buckets }) {
+    this.buckets = [...buckets].sort((a, b) => a - b);
+    this.values = new Map();
+  }
+
+  observe(labels, value) {
+    const sample = Number(value);
+    if (!Number.isFinite(sample) || sample < 0) return;
+    const key = JSON.stringify(labels || {});
+    const current = this.values.get(key) || {
+      buckets: new Array(this.buckets.length).fill(0),
+      count: 0,
+      sum: 0,
+    };
+    current.count += 1;
+    current.sum += sample;
+    for (let index = 0; index < this.buckets.length; index += 1) {
+      if (sample <= this.buckets[index]) current.buckets[index] += 1;
+    }
+    this.values.set(key, current);
+  }
+
+  lines(name) {
+    const lines = [];
+    for (const [key, value] of this.values.entries()) {
+      const labels = JSON.parse(key);
+      for (let index = 0; index < this.buckets.length; index += 1) {
+        lines.push(metricLine(`${name}_bucket`, { ...labels, le: String(this.buckets[index]) }, value.buckets[index]));
+      }
+      lines.push(metricLine(`${name}_bucket`, { ...labels, le: '+Inf' }, value.count));
+      lines.push(metricLine(`${name}_sum`, labels, value.sum));
+      lines.push(metricLine(`${name}_count`, labels, value.count));
+    }
+    return lines;
+  }
+}
+
 function aggregateDevices(devicesByUser, labelsFor) {
   const values = new Map();
   for (const device of iterEnabledDevices(devicesByUser)) {
@@ -52,10 +90,20 @@ export async function buildPushMetrics({
   dedupCache,
   signedRequestReplayCacheSize = 0,
   counters,
+  histograms = {},
   observedServersSize,
   dbReady,
   pool,
 }) {
+  let observedServersTotal = observedServersSize;
+  if (dbReady) {
+    try {
+      const totalResult = await pool.query('select count(*)::int as count from observed_servers');
+      observedServersTotal = Number(totalResult.rows[0]?.count || 0);
+    } catch (_) {
+      observedServersTotal = observedServersSize;
+    }
+  }
   const lines = [
     '# HELP peerlink_push_registered_users Registered users with message devices.',
     '# TYPE peerlink_push_registered_users gauge',
@@ -87,6 +135,9 @@ export async function buildPushMetrics({
     '# HELP peerlink_push_failed_total Push deliveries failed.',
     '# TYPE peerlink_push_failed_total counter',
     ...counters.failed.lines('peerlink_push_failed_total'),
+    '# HELP peerlink_push_delivery_duration_seconds Push provider delivery duration.',
+    '# TYPE peerlink_push_delivery_duration_seconds histogram',
+    ...(histograms.deliveryDuration?.lines('peerlink_push_delivery_duration_seconds') || []),
     '# HELP peerlink_push_deduped_total Push events deduped.',
     '# TYPE peerlink_push_deduped_total counter',
     ...counters.deduped.lines('peerlink_push_deduped_total'),
@@ -98,7 +149,7 @@ export async function buildPushMetrics({
     ...counters.policySync.lines('peerlink_push_access_policy_sync_total'),
     '# HELP peerlink_observed_servers_total Servers observed in push payloads.',
     '# TYPE peerlink_observed_servers_total gauge',
-    metricLine('peerlink_observed_servers_total', {}, observedServersSize),
+    metricLine('peerlink_observed_servers_total', {}, observedServersTotal),
     '# HELP peerlink_push_observability_postgres_up Postgres observability state.',
     '# TYPE peerlink_push_observability_postgres_up gauge',
     metricLine('peerlink_push_observability_postgres_up', {}, dbReady ? 1 : 0),
