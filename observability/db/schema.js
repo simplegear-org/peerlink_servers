@@ -108,6 +108,33 @@ alter table moderation_appeals
   add column if not exists resolution_note text,
   add column if not exists resolved_by text;
 
+alter table moderation_reports add column if not exists action_by text;
+alter table moderation_appeals add column if not exists audit_history jsonb not null default '[]'::jsonb;
+create table if not exists moderation_policy_audit (
+  id bigserial primary key,
+  peer_id text not null,
+  event jsonb not null
+);
+
+-- Normalize legacy decisions once without removing their audit history.
+create table if not exists moderation_migrations (version integer primary key);
+do $$
+begin
+  if not exists (select 1 from moderation_migrations where version = 1) then
+    update moderation_reports set
+      status = case when action_at is not null then 'resolved' else 'pending' end,
+      action_by = coalesce(action_by, audit_history -> -1 ->> 'actor', 'legacy_moderator');
+    update moderation_peer_scores s set
+      report_count = (select count(*) from moderation_reports r where r.reported_peer_id = s.peer_id),
+      reporter_count = (select count(distinct reporter_peer_id) from moderation_reports r where r.reported_peer_id = s.peer_id),
+      pending_count = (select count(*) from moderation_reports r where r.reported_peer_id = s.peer_id and r.status = 'pending'),
+      processed_count = (select count(*) from moderation_reports r where r.reported_peer_id = s.peer_id and r.status = 'resolved'),
+      appealed_count = (select count(*) from moderation_appeals a where a.peer_id = s.peer_id);
+    insert into moderation_migrations values (1);
+  end if;
+end $$;
+create index if not exists moderation_reports_queue_idx on moderation_reports(status, received_at, id);
+
 create table if not exists peer_identity_bindings (
   peer_id text primary key,
   signing_pub text not null,

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 export async function refreshModerationPeerScore(client, peerId) {
+  // Serialize score snapshots for the same identity within the caller's transaction.
+  await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [peerId]);
   const stats = await client.query(
     `select
        count(*)::int as report_count,
        count(distinct reporter_peer_id)::int as reporter_count,
-       count(*)::int as pending_count,
-       0::int as processed_count,
-       0::int as appealed_count,
+       count(*) filter (where status = 'pending')::int as pending_count,
+       count(*) filter (where status = 'resolved')::int as processed_count,
+       (select count(*)::int from moderation_appeals where peer_id = $1) as appealed_count,
        max(received_at) as last_report_at
      from moderation_reports
      where reported_peer_id = $1`,
@@ -66,13 +68,9 @@ export async function setModerationPeerPolicy(client, peerId, action) {
   await refreshModerationPeerScore(client, peerId);
   const result = await client.query(
     `update moderation_peer_scores set
-       policy_state = case
-         when policy_state = 'banned' then 'banned'
-         when $2 = 'banned' then 'banned'
-         else 'warning'
-       end,
+       policy_state = $2,
        warning_issued_at = coalesce(warning_issued_at, now()),
-       banned_at = case when policy_state = 'banned' or $2 = 'banned' then coalesce(banned_at, now()) else banned_at end,
+       banned_at = case when $2 = 'banned' then coalesce(banned_at, now()) else null end,
        updated_at = now()
      where peer_id = $1
      returning *`,
@@ -103,10 +101,15 @@ export function mapModerationReport(row) {
     reason: row.reason,
     reporterPeerId: row.reporter_peer_id,
     reportedPeerId: row.reported_peer_id,
-    contentEncrypted: row.content_encrypted,
-    encryptedContent: row.encrypted_content,
+    contentEncrypted: false,
+    encryptedContent: null,
     clientCreatedAt: row.client_created_at,
     receivedAt: row.received_at,
+    status: row.status,
+    actionBy: row.action_by,
+    previousReportCount: Number(row.previous_report_count || 0),
+    reporterCount: Number(row.reporter_count || 0),
+    policyState: row.policy_state || 'clear',
     action: row.action,
     actionNote: row.action_note,
     actionAt: row.action_at,
@@ -164,6 +167,7 @@ export function mapModerationAppeal(row) {
     resolutionAction: row.resolution_action,
     resolutionNote: row.resolution_note,
     resolvedBy: row.resolved_by,
+    auditHistory: row.audit_history || [],
   };
 }
 

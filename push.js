@@ -13,6 +13,7 @@ import { registerDeviceRoutes } from './devices/routes.js';
 import { createDedupCache } from './delivery/dedup-cache.js';
 import { createPushProviders } from './delivery/providers.js';
 import { registerModerationRoutes } from './moderation/routes.js';
+import { moderationPolicyMessage, normalizeModerationAction, normalizeModerationStatus } from './moderation/workflow.js';
 import { createIdentityBindingService } from './security/identity-bindings.js';
 import {
   createSignedRequestVerifier,
@@ -210,11 +211,7 @@ function createModerationPolicyNotifier({
       messageKey,
       reportCount: String(reportCount),
       reporterCount: String(reporterCount),
-      message: policyState === 'banned'
-        ? `Your PeerLink X account has been blocked after ${reportCount} reports from ${reporterCount} users. You can submit an appeal in the app.`
-        : policyState === 'warning'
-          ? `Your PeerLink X account received ${reportCount} reports from ${reporterCount} users and may be blocked if more reports are received.`
-          : 'Your PeerLink X account has been unblocked.',
+      message: moderationPolicyMessage(policyState),
       ...(note ? { moderatorNote: note } : {}),
       ...(signedStatus ? { signedStatus } : {}),
     };
@@ -397,18 +394,6 @@ function normalizeTimestamp(value) {
   if (typeof value !== 'string') return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function normalizeModerationStatus(value) {
-  const status = normalizeStringValue(value, 32)?.toLowerCase();
-  if (!status || status === 'all') return 'all';
-  if (status === 'pending' || status === 'processed') return status;
-  return ['pending', 'resolved', 'rejected', 'appealed'].includes(status) ? 'all' : null;
-}
-
-function normalizeModerationAction(value) {
-  const action = normalizeStringValue(value, 32)?.toLowerCase();
-  return ['warn', 'ban', 'unban'].includes(action) ? action : null;
 }
 
 function normalizeDeviceId(value) {

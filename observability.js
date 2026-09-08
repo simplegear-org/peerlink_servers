@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { SCHEMA_SQL } from './observability/db/schema.js';
+import { compareReportQueue, decisionError, policyActions, reportDecisionAudit, resolutionStatistics, validateDecision } from './moderation/workflow.js';
 import { buildPushMetrics, CounterMap, HistogramMap } from './observability/metrics.js';
 import {
   compareModerationScores,
@@ -51,6 +52,7 @@ export class PushObservability {
     this.moderationReports = new Map();
     this.moderationAppeals = new Map();
     this.moderationPeerPolicies = new Map();
+    this.moderationPolicyAudit = [];
     this.peerIdentityBindings = new Map();
     this.pushUserPolicies = new Map();
     this.pushUserContacts = new Map();
@@ -526,6 +528,10 @@ export class PushObservability {
   }
 
   async createModerationReport(report) {
+    // Only persist the existing report metadata, never submitted private content.
+    report = { id: report.id, type: report.type, reason: report.reason,
+      reporterPeerId: report.reporterPeerId, reportedPeerId: report.reportedPeerId,
+      clientCreatedAt: report.clientCreatedAt, contentEncrypted: false, encryptedContent: null };
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
@@ -583,7 +589,13 @@ export class PushObservability {
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
-        return await refreshModerationPeerScore(client, peerId);
+        await client.query('begin');
+        const score = await refreshModerationPeerScore(client, peerId);
+        await client.query('commit');
+        return score;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
       } finally {
         client.release();
       }
@@ -631,9 +643,9 @@ export class PushObservability {
       peerId,
       reportCount,
       reporterCount,
-      pendingCount: reports.length,
-      processedCount: 0,
-      appealedCount: 0,
+      pendingCount: reports.filter((r) => r.status === 'pending').length,
+      processedCount: reports.filter((r) => r.status === 'resolved').length,
+      appealedCount: [...this.moderationAppeals.values()].filter((a) => a.peerId === peerId).length,
       policyState: policy?.policyState || 'clear',
       warningIssuedAt: policy?.warningIssuedAt || null,
       bannedAt: policy?.bannedAt || null,
@@ -647,11 +659,15 @@ export class PushObservability {
       const result = await this.pool.query(
         `select
            count(*)::int as total,
-           count(*) filter (where action_at is null)::int as pending,
-           count(*) filter (where action_at is not null)::int as processed,
-           count(*) filter (where action_at is null and received_at <= now() - interval '20 hours' and received_at >= now() - interval '24 hours')::int as approaching_24h,
-           count(*) filter (where action_at is null and received_at < now() - interval '24 hours')::int as overdue,
-           0::int as appealed
+           count(*) filter (where status = 'pending')::int as pending,
+           count(*) filter (where status = 'resolved')::int as processed,
+           count(*) filter (where status = 'pending' and received_at <= now() - interval '20 hours' and received_at >= now() - interval '24 hours')::int as approaching_24h,
+           count(*) filter (where status = 'pending' and received_at < now() - interval '24 hours')::int as overdue,
+           count(*) filter (where status = 'resolved' and action_at <= received_at + interval '24 hours')::int as resolved_within_24h,
+           count(*) filter (where status = 'resolved' and action_at > received_at + interval '24 hours')::int as resolved_after_24h,
+           100.0 * count(*) filter (where status = 'resolved' and action_at <= received_at + interval '24 hours') / nullif(count(*) filter (where status = 'resolved' and action_at is not null), 0) as resolved_within_24h_percent,
+           percentile_cont(0.5) within group (order by greatest(0, extract(epoch from action_at - received_at))) filter (where status = 'resolved' and action_at is not null) as median_resolution_seconds,
+           (select count(*)::int from moderation_appeals) as appealed
          from moderation_reports`,
       );
       const peers = await this.pool.query(
@@ -663,17 +679,18 @@ export class PushObservability {
       return { ...result.rows[0], ...peers.rows[0], remaining: result.rows[0].pending };
     }
     const reports = [...this.moderationReports.values()];
-    const pending = reports.filter((report) => !report.actionAt);
+    const pending = reports.filter((report) => report.status === 'pending');
     const now = Date.now();
     const age = (report) => now - new Date(report.receivedAt).getTime();
-    const scores = new Map(reports.map((report) => [report.reportedPeerId, this.memoryModerationStatus(report.reportedPeerId)]));
+    const scores = this.moderationPeerPolicies;
     return {
       total: reports.length,
       pending: pending.length,
-      processed: reports.length - pending.length,
+      processed: reports.filter((report) => report.status === 'resolved').length,
+      ...resolutionStatistics(reports),
       approaching_24h: pending.filter((report) => age(report) >= 20 * 3600000 && age(report) <= 24 * 3600000).length,
       overdue: pending.filter((report) => age(report) > 24 * 3600000).length,
-      appealed: 0,
+      appealed: this.moderationAppeals.size,
       remaining: pending.length,
       warned_peers: [...scores.values()].filter((score) => score.policyState === 'warning').length,
       banned_peers: [...scores.values()].filter((score) => score.policyState === 'banned').length,
@@ -681,29 +698,41 @@ export class PushObservability {
   }
 
   async listModerationReports({ status, reportedPeerId, limit = 100 } = {}) {
+    if (status === 'processed') status = 'resolved';
     if (this.dbReady) {
       const filters = [];
       const values = [];
-      if (status === 'pending') filters.push('action_at is null');
-      if (status === 'processed') filters.push('action_at is not null');
+      if (status === 'pending') filters.push("r.status = 'pending'");
+      if (status === 'resolved') filters.push("r.status = 'resolved'");
       if (reportedPeerId) {
         values.push(reportedPeerId);
-        filters.push(`reported_peer_id = $${values.length}`);
+        filters.push(`r.reported_peer_id = $${values.length}`);
       }
       values.push(limit);
       const where = filters.length ? `where ${filters.join(' and ')}` : '';
       const result = await this.pool.query(
-        `select * from moderation_reports ${where} order by received_at desc limit $${values.length}`,
+        `select r.*, coalesce(s.policy_state, 'clear') as policy_state,
+          (select count(*)::int from moderation_reports p where p.reported_peer_id = r.reported_peer_id and (p.received_at, p.id) < (r.received_at, r.id)) as previous_report_count,
+          (select count(distinct reporter_peer_id)::int from moderation_reports p where p.reported_peer_id = r.reported_peer_id) as reporter_count
+         from moderation_reports r left join moderation_peer_scores s on s.peer_id = r.reported_peer_id
+         ${where} order by case
+           when r.received_at < now() - interval '24 hours' then 0
+           when r.received_at <= now() - interval '20 hours' then 1
+           when r.reason in ('threats', 'illegal_content') then 2 else 3 end,
+         r.received_at asc, r.id asc limit $${values.length}`,
         values,
       );
       return result.rows.map(mapModerationReport);
     }
     return [...this.moderationReports.values()]
-      .filter((report) => status !== 'pending' || !report.actionAt)
-      .filter((report) => status !== 'processed' || !!report.actionAt)
+      .filter((report) => !status || status === 'all' || report.status === status)
       .filter((report) => !reportedPeerId || report.reportedPeerId === reportedPeerId)
-      .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
-      .slice(0, limit);
+      .sort(compareReportQueue)
+      .slice(0, limit)
+      .map((report) => ({ ...report,
+        previousReportCount: [...this.moderationReports.values()].filter((p) => p.reportedPeerId === report.reportedPeerId && (p.receivedAt < report.receivedAt || (p.receivedAt === report.receivedAt && p.id < report.id))).length,
+        reporterCount: this.memoryModerationStatus(report.reportedPeerId).reporterCount,
+        policyState: this.memoryModerationStatus(report.reportedPeerId).policyState }));
   }
 
   async listModerationPeerScores({ sort = 'report_count_desc', limit = 500 } = {}) {
@@ -774,6 +803,8 @@ export class PushObservability {
   }
 
   async recordModerationAction({ reportId, action, note, actor }) {
+    validateDecision(action, note, actor);
+    note = note.trim();
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
@@ -784,20 +815,24 @@ export class PushObservability {
           return null;
         }
         const row = current.rows[0];
+        if (row.status !== 'pending') throw decisionError('report_already_resolved', 409);
         const audit = Array.isArray(row.audit_history) ? row.audit_history : [];
-        audit.push({ at: nowIso(), action, actor, note: note || null });
+        const event = reportDecisionAudit(mapModerationReport(row), action, note, actor);
+        audit.push(event);
         const updated = await client.query(
           `update moderation_reports set
+             status = 'resolved',
              action = $2,
              action_note = $3,
-             action_at = now(),
+             action_at = $5,
+             action_by = $6,
              audit_history = $4
            where id = $1
            returning *`,
-          [reportId, action, note || null, JSON.stringify(audit)],
+          [reportId, action, note, JSON.stringify(audit), event.at, actor],
         );
         let score = await refreshModerationPeerScore(client, row.reported_peer_id);
-        score = await setModerationPeerPolicy(client, row.reported_peer_id, action);
+        if (action !== 'dismiss') score = await setModerationPeerPolicy(client, row.reported_peer_id, action);
         await client.query('commit');
         return { report: mapModerationReport(updated.rows[0]), score };
       } catch (error) {
@@ -810,28 +845,31 @@ export class PushObservability {
 
     const report = this.moderationReports.get(reportId);
     if (!report) return null;
+    if (report.status !== 'pending') throw decisionError('report_already_resolved', 409);
+    const event = reportDecisionAudit(report, action, note, actor);
+    report.status = 'resolved';
     report.action = action;
     report.actionNote = note || null;
-    report.actionAt = nowIso();
-    report.auditHistory.push({ at: nowIso(), action, actor, note: note || null });
-    return { report, score: this.recordMemoryPeerPolicy(report.reportedPeerId, action) };
+    report.actionAt = event.at;
+    report.actionBy = actor;
+    report.auditHistory.push(event);
+    return { report, score: action === 'dismiss' ? this.memoryModerationStatus(report.reportedPeerId) : this.recordMemoryPeerPolicy(report.reportedPeerId, action) };
   }
 
   async recordModerationPeerAction({ peerId, action, note, actor }) {
+    validateDecision(action, note, actor, policyActions);
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
         await client.query('begin');
+        await refreshModerationPeerScore(client, peerId);
+        const previous = await client.query('select policy_state from moderation_peer_scores where peer_id = $1 for update', [peerId]);
         const score = await setModerationPeerPolicy(client, peerId, action);
-        const audit = { at: nowIso(), action, actor, note: note || null };
+        const audit = { at: nowIso(), action, actor, note, peerId,
+          previousStatus: previous.rows[0].policy_state, newStatus: score.policyState };
         await client.query(
-          `update moderation_reports set
-             action = $2,
-             action_note = $3,
-             action_at = now(),
-             audit_history = coalesce(audit_history, '[]'::jsonb) || $4::jsonb
-           where reported_peer_id = $1`,
-          [peerId, action, note || null, JSON.stringify([audit])],
+          'insert into moderation_policy_audit (peer_id, event) values ($1, $2)',
+          [peerId, JSON.stringify(audit)],
         );
         await client.query('commit');
         return score;
@@ -842,15 +880,10 @@ export class PushObservability {
         client.release();
       }
     }
-    const at = nowIso();
-    for (const report of this.moderationReports.values()) {
-      if (report.reportedPeerId !== peerId) continue;
-      report.action = action;
-      report.actionNote = note || null;
-      report.actionAt = at;
-      report.auditHistory.push({ at, action, actor, note: note || null });
-    }
-    return this.recordMemoryPeerPolicy(peerId, action);
+    const previousStatus = this.memoryModerationStatus(peerId).policyState;
+    const score = this.recordMemoryPeerPolicy(peerId, action);
+    this.moderationPolicyAudit.push({ at: nowIso(), action, actor, note, peerId, previousStatus, newStatus: score.policyState });
+    return score;
   }
 
   recordMemoryPeerPolicy(peerId, action) {
@@ -864,14 +897,14 @@ export class PushObservability {
       this.moderationPeerPolicies.set(peerId, next);
       return this.memoryModerationStatus(peerId);
     }
-    const policyState = current.policyState === 'banned' || action === 'ban'
+    const policyState = action === 'ban'
       ? 'banned'
       : 'warning';
     const at = nowIso();
     const next = {
       policyState,
       warningIssuedAt: current.warningIssuedAt || at,
-      bannedAt: policyState === 'banned' ? (current.bannedAt || at) : current.bannedAt,
+      bannedAt: policyState === 'banned' ? (current.bannedAt || at) : null,
     };
     this.moderationPeerPolicies.set(peerId, next);
     return this.memoryModerationStatus(peerId);
@@ -880,13 +913,24 @@ export class PushObservability {
   async createModerationAppeal({ peerId, text }) {
     const appeal = { id: cryptoRandomId(), peerId, text, status: 'open', createdAt: nowIso() };
     if (this.dbReady) {
-      const result = await this.pool.query(
-        `insert into moderation_appeals (id, peer_id, text, status)
-         values ($1, $2, $3, 'open')
-         returning *`,
-        [appeal.id, peerId, text],
-      );
-      return mapModerationAppeal(result.rows[0]);
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        const result = await client.query(
+          `insert into moderation_appeals (id, peer_id, text, status)
+           values ($1, $2, $3, 'open')
+           returning *`,
+          [appeal.id, peerId, text],
+        );
+        await refreshModerationPeerScore(client, peerId);
+        await client.query('commit');
+        return mapModerationAppeal(result.rows[0]);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     }
     this.moderationAppeals.set(appeal.id, appeal);
     return appeal;
@@ -911,6 +955,11 @@ export class PushObservability {
   }
 
   async resolveModerationAppealWithUnban({ appealId, note, actor }) {
+    return this.resolveModerationAppeal({ appealId, action: 'unban', note, actor });
+  }
+
+  async resolveModerationAppeal({ appealId, action, note, actor }) {
+    validateDecision(action, note, actor, ['unban', 'reject']);
     if (this.dbReady) {
       const client = await this.pool.connect();
       try {
@@ -921,17 +970,23 @@ export class PushObservability {
           return null;
         }
         const appealRow = current.rows[0];
-        const score = await setModerationPeerPolicy(client, appealRow.peer_id, 'unban');
+        if (appealRow.status !== 'open') throw decisionError('appeal_already_resolved', 409);
+        const score = action === 'unban'
+          ? await setModerationPeerPolicy(client, appealRow.peer_id, 'unban')
+          : await refreshModerationPeerScore(client, appealRow.peer_id);
+        const status = action === 'unban' ? 'accepted' : 'rejected';
+        const event = { at: nowIso(), appealId, peerId: appealRow.peer_id, actor, action, note, previousStatus: 'open', newStatus: status };
         const updated = await client.query(
           `update moderation_appeals set
-             status = 'accepted',
+             status = $4,
              resolved_at = now(),
-             resolution_action = 'unban',
+             resolution_action = $5,
              resolution_note = $2,
-             resolved_by = $3
+             resolved_by = $3,
+             audit_history = audit_history || $6::jsonb
            where id = $1
            returning *`,
-          [appealId, note || null, actor || null],
+          [appealId, note, actor, status, action, JSON.stringify([event])],
         );
         await client.query('commit');
         return { appeal: mapModerationAppeal(updated.rows[0]), score };
@@ -944,12 +999,14 @@ export class PushObservability {
     }
     const appeal = this.moderationAppeals.get(appealId);
     if (!appeal) return null;
-    appeal.status = 'accepted';
+    if (appeal.status !== 'open') throw decisionError('appeal_already_resolved', 409);
+    appeal.status = action === 'unban' ? 'accepted' : 'rejected';
     appeal.resolvedAt = nowIso();
-    appeal.resolutionAction = 'unban';
+    appeal.resolutionAction = action;
     appeal.resolutionNote = note || null;
     appeal.resolvedBy = actor || null;
-    return { appeal, score: this.recordMemoryPeerPolicy(appeal.peerId, 'unban') };
+    appeal.auditHistory = [...(appeal.auditHistory || []), { at: appeal.resolvedAt, appealId, peerId: appeal.peerId, actor, action, note, previousStatus: 'open', newStatus: appeal.status }];
+    return { appeal, score: action === 'unban' ? this.recordMemoryPeerPolicy(appeal.peerId, 'unban') : this.memoryModerationStatus(appeal.peerId) };
   }
 
   async persistObservedServers({ servers, eventType }) {

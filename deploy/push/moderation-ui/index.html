@@ -42,7 +42,7 @@
       backdrop-filter: blur(12px);
     }
     h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
-    main { width: min(1320px, 100%); margin: 0 auto; padding: 20px 24px 28px; }
+    main { width: min(1840px, 100%); margin: 0 auto; padding: 20px 24px 28px; }
     input, textarea, button {
       height: 38px;
       font: inherit;
@@ -78,7 +78,7 @@
     .token { display: grid; grid-template-columns: minmax(220px, 420px) auto auto; gap: 8px; align-items: center; }
     .metrics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -119,17 +119,25 @@
     .view-title h2 { margin: 0; font-size: 15px; line-height: 1.25; }
     .view-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 860px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1000px; }
+    .reports-table { min-width: 1660px; }
     .col-date { width: 160px; }
     .col-peer { width: 190px; }
+    .col-sla { width: 170px; }
     .col-small { width: 86px; }
     .col-actions { width: 168px; }
+    .col-report-actions { width: 240px; }
+    .col-reason { width: 150px; }
+    .col-policy { width: 110px; }
+    .priority { display: block; margin-top: 5px; color: #f0c36a; font-size: 12px; }
+    tr.overdue td:first-child { box-shadow: inset 3px 0 var(--danger); }
     th, td {
       padding: 11px 12px;
       border-bottom: 1px solid var(--line);
       text-align: left;
-      vertical-align: top;
+      vertical-align: middle;
       font-size: 13px;
+      line-height: 1.45;
       overflow-wrap: anywhere;
     }
     th {
@@ -139,6 +147,9 @@
     }
     tr:hover td { background: rgba(88, 166, 255, 0.04); }
     .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .actions button { height: 34px; padding: 0 10px; }
+    .action-error { padding: 12px 16px; color: var(--danger); }
+    .action-error:empty { display: none; }
     .peer-id {
       display: inline-flex;
       align-items: center;
@@ -215,11 +226,10 @@
       main { padding: 14px; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .view-head { align-items: flex-start; flex-direction: column; }
-      table { min-width: 760px; }
     }
     @media (max-width: 560px) {
+      header { position: static; padding: 14px; }
       .token { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: 1fr; }
       .pager { justify-content: space-between; }
     }
   </style>
@@ -249,6 +259,7 @@
         </div>
       </div>
       <div id="content"></div>
+      <div id="actionError" class="action-error" role="alert"></div>
       <div class="pager" id="pager"></div>
     </section>
   </main>
@@ -259,7 +270,8 @@
         <p id="decisionMeta"></p>
       </div>
       <div class="dialog-body">
-        <textarea id="decisionNote" spellcheck="true"></textarea>
+        <label for="decisionNote">Moderator note (required)</label>
+        <textarea id="decisionNote" spellcheck="true" required maxlength="2048"></textarea>
       </div>
       <div class="dialog-foot">
         <button class="ghost" id="decisionCancel" type="button">Cancel</button>
@@ -285,13 +297,14 @@
     const decisionConfirm = document.querySelector('#decisionConfirm');
     const tabs = Array.from(document.querySelectorAll('.tab'));
     const state = {
+      deciding: false,
       activeTab: 'reports',
       pages: { reports: 1, reported: 1, reporters: 1, appeals: 1 },
       data: { reports: [], reported: [], reporters: [], appeals: [] },
     };
     const labels = {
-      reports: ['Incoming Reports', 'Metadata-only reports'],
-      reported: ['Reported Users', 'Peers reported by other users'],
+      reports: ['Incoming Reports', 'Metadata only · Overdue first, then approaching 24h, then high priority · Oldest first within each category'],
+      reported: ['Reported Users', 'Policy actions do not resolve individual reports'],
       reporters: ['Reporters', 'Users who submitted reports'],
       appeals: ['Appeals', 'Ban appeals and unban actions'],
     };
@@ -355,13 +368,12 @@
       return `<span class="badge ${cls}">${esc(value || 'clear')}</span>`;
     }
 
-    function defaultDecisionNote(action, reportCount, reporterCount) {
-      const reports = Number(reportCount || 0);
-      const reporters = Number(reporterCount || 0);
-      if (action === 'ban') {
-        return `Account blocked because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`;
-      }
-      return `Warning issued because ${reports} reports were received from ${reporters} users. Reporter Peer IDs are not disclosed.`;
+    function defaultDecisionNote(action) {
+      return {
+        dismiss: 'Report reviewed. No policy violation was established based on the available moderation information.',
+        warn: 'Report reviewed. A policy violation was confirmed and a warning was issued.',
+        ban: 'Report reviewed. A serious or repeated policy violation was confirmed and the PeerLink identity was suspended.',
+      }[action];
     }
 
     function openDecisionModal({ title, meta, note, confirmLabel, danger }) {
@@ -369,6 +381,10 @@
         decisionTitle.textContent = title;
         decisionMeta.textContent = meta;
         decisionNote.value = note;
+        decisionConfirm.disabled = !note.trim();
+        const previousFocus = document.activeElement;
+        const onInput = () => { decisionConfirm.disabled = !decisionNote.value.trim(); };
+        decisionNote.addEventListener('input', onInput);
         decisionConfirm.textContent = confirmLabel;
         decisionConfirm.classList.toggle('danger', danger);
         decisionConfirm.classList.toggle('confirm', danger);
@@ -385,17 +401,29 @@
           decisionConfirm.removeEventListener('click', onConfirm);
           decisionModal.removeEventListener('click', onBackdrop);
           document.removeEventListener('keydown', onKeydown);
+          decisionNote.removeEventListener('input', onInput);
+          previousFocus?.focus();
           resolve(value);
         };
         const onCancel = () => close(null);
-        const onConfirm = () => close(decisionNote.value.trim());
+        const onConfirm = () => {
+          if (!decisionNote.value.trim()) { decisionNote.reportValidity(); return; }
+          close(decisionNote.value.trim());
+        };
         const onBackdrop = (event) => {
           if (event.target === decisionModal) close(null);
         };
         const onKeydown = (event) => {
           if (event.key === 'Escape') close(null);
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-            close(decisionNote.value.trim());
+            event.preventDefault();
+            onConfirm();
+          }
+          if (event.key === 'Tab') {
+            const first = decisionNote;
+            const last = decisionConfirm.disabled ? decisionCancel : decisionConfirm;
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
           }
         };
         decisionCancel.addEventListener('click', onCancel);
@@ -407,9 +435,9 @@
 
     async function actPeer(peerId, action, reportCount, reporterCount) {
       const note = await openDecisionModal({
-        title: action === 'ban' ? 'Ban user' : 'Warn user',
-        meta: shortPeerId(peerId),
-        note: defaultDecisionNote(action, reportCount, reporterCount),
+        title: action === 'ban' ? 'Suspend PeerLink identity' : 'Warn PeerLink identity',
+        meta: `${shortPeerId(peerId)} · ${reportCount} reports / ${reporterCount} reporters · Policy only; reports remain pending`,
+        note: action === 'ban' ? 'A serious or repeated policy violation was confirmed and the PeerLink identity was suspended.' : 'A policy violation was confirmed and a warning was issued.',
         confirmLabel: action === 'ban' ? 'Ban' : 'Warn',
         danger: action === 'ban',
       });
@@ -424,16 +452,29 @@
     }
     window.actPeer = actPeer;
 
-    async function unbanAppeal(appealId, peerId) {
+    async function actReport(reportId, action) {
+      const report = state.data.reports.find((item) => item.id === reportId);
+      if (!report) return;
       const note = await openDecisionModal({
-        title: 'Unban user',
+        title: { dismiss: 'Dismiss report', warn: 'Warn PeerLink identity', ban: 'Suspend PeerLink identity' }[action],
+        meta: `${shortPeerId(report.reportedPeerId)} · Report ${report.id} · ${report.previousReportCount} previous reports / ${report.reporterCount} reporters · Policy: ${report.policyState}. Counts are context, not evidence of a violation.`,
+        note: defaultDecisionNote(action), confirmLabel: { dismiss: 'Dismiss', warn: 'Warn', ban: 'Ban' }[action], danger: action === 'ban',
+      });
+      if (note === null) return;
+      await postJson(`/admin/reports/${encodeURIComponent(reportId)}/action`, { action, note });
+      await load();
+    }
+
+    async function unbanAppeal(appealId, peerId, action = 'unban') {
+      const note = await openDecisionModal({
+        title: action === 'unban' ? 'Unban PeerLink identity' : 'Reject appeal / Uphold ban',
         meta: shortPeerId(peerId),
-        note: 'Appeal accepted. Account is unblocked.',
-        confirmLabel: 'Unban',
+        note: action === 'unban' ? 'Appeal accepted. PeerLink identity is unblocked.' : 'Appeal reviewed. The existing moderation restriction remains in effect.',
+        confirmLabel: action === 'unban' ? 'Unban' : 'Reject appeal',
         danger: false,
       });
       if (note === null) return;
-      await postJson(`/admin/moderation/appeals/${encodeURIComponent(appealId)}/unban`, { note });
+      await postJson(`/admin/moderation/appeals/${encodeURIComponent(appealId)}/${action}`, { note });
       await load();
     }
     window.unbanAppeal = unbanAppeal;
@@ -470,29 +511,36 @@
     function renderReports(items) {
       const reports = pageItems(items);
       if (!items.length) return '<div class="empty">No reports</div>';
-      return `<div class="table-wrap"><table>
-        <thead><tr><th class="col-date">Received</th><th>Age / SLA</th><th class="col-peer">Reported peer</th><th class="col-peer">Reporter</th><th>Reason</th><th class="col-small">Type</th><th class="col-small">Content</th></tr></thead>
-        <tbody>${reports.map((report) => `<tr>
+      return `<div class="table-wrap"><table class="reports-table">
+        <thead><tr><th class="col-date">Received</th><th class="col-small">Age</th><th class="col-sla">SLA status</th><th class="col-reason">Reason / Priority</th><th class="col-small">Type</th><th class="col-peer">Reported Peer ID</th><th class="col-peer">Reporter Peer ID</th><th class="col-small">Previous reports</th><th class="col-small" title="Number of independent reporters">Reporters</th><th class="col-policy">Policy</th><th class="col-report-actions">Decision</th></tr></thead>
+        <tbody>${reports.map((report) => `<tr class="${Date.now() - new Date(report.receivedAt) > 24 * 3600000 ? 'overdue' : ''}">
           <td>${fmt(report.receivedAt)}</td>
+          <td>${reportAge(report)}</td>
           <td>${reportSla(report)}</td>
+          <td>${esc(report.reason)}${['threats', 'illegal_content'].includes(report.reason) ? '<span class="priority">High priority</span>' : ''}</td>
+          <td>${esc({ direct_report: 'Direct', group_report: 'Group' }[report.type] || report.type)}</td>
           <td>${peerCell(report.reportedPeerId)}</td>
           <td>${peerCell(report.reporterPeerId)}</td>
-          <td>${esc(report.reason)}</td>
-          <td>${esc(report.type)}</td>
-          <td>metadata only</td>
+          <td>${esc(report.previousReportCount ?? 0)}</td>
+          <td>${esc(report.reporterCount ?? 0)}</td>
+          <td>${badge(report.policyState)}</td>
+          <td><div class="actions">${['dismiss', 'warn', 'ban'].map((action) => `<button type="button" class="js-act-report ${action === 'ban' ? 'danger' : action === 'warn' ? 'warn' : 'ghost'}" data-report="${esc(report.id)}" data-action="${action}">${action[0].toUpperCase() + action.slice(1)}</button>`).join('')}</div></td>
         </tr>`).join('')}</tbody>
       </table></div>`;
     }
 
+    function reportAge(report) {
+      const age = Math.max(0, Date.now() - new Date(report.receivedAt).getTime());
+      return Number.isFinite(age) ? `${Math.floor(age / 3600000)}h ${Math.floor(age / 60000) % 60}m` : 'Unknown';
+    }
+
     function reportSla(report) {
-      if (report.actionAt) return 'Processed';
+      if (report.status === 'resolved') return 'Resolved';
       const age = Math.max(0, Date.now() - new Date(report.receivedAt).getTime());
       if (!Number.isFinite(age)) return 'Unknown';
-      const hours = Math.floor(age / 3600000);
-      const minutes = Math.floor(age / 60000) % 60;
       const status = age > 24 * 3600000 ? 'OVERDUE' : age >= 20 * 3600000 ? 'Approaching 24h' : 'Pending';
       const cls = age > 24 * 3600000 ? 'banned' : age >= 20 * 3600000 ? 'warning' : '';
-      return `${hours}h ${minutes}m <span class="badge ${cls}">${status}</span>`;
+      return `<span class="badge ${cls}">${status}</span>`;
     }
 
     function renderPeerAggregate(items, emptyText, withActions) {
@@ -507,9 +555,9 @@
           <td>${peer.directCount || 0}</td>
           <td>${peer.groupCount || 0}</td>
           <td>${fmt(peer.lastReportAt)}</td>
-          <td class="actions">${withActions
+          <td><div class="actions">${withActions
             ? `<button class="warn js-act-peer" type="button" data-peer="${esc(peer.peerId)}" data-action="warn" data-reports="${peer.reportCount || 0}" data-reporters="${peer.reporterCount || 0}">Warn</button><button class="danger js-act-peer" type="button" data-peer="${esc(peer.peerId)}" data-action="ban" data-reports="${peer.reportCount || 0}" data-reporters="${peer.reporterCount || 0}">Ban</button>`
-            : 'metadata only'}</td>
+            : 'metadata only'}</div></td>
         </tr>`).join('')}</tbody>
       </table></div>`;
     }
@@ -518,16 +566,16 @@
       const appeals = pageItems(items);
       if (!items.length) return '<div class="empty">No appeals</div>';
       return `<div class="table-wrap"><table>
-        <thead><tr><th class="col-date">Created</th><th class="col-peer">Peer ID</th><th class="col-small">Status</th><th>Appeal</th><th class="col-date">Resolved</th><th class="col-actions">Decision</th></tr></thead>
+        <thead><tr><th class="col-date">Created</th><th class="col-peer">Peer ID</th><th class="col-small">Status</th><th>Appeal</th><th class="col-date">Resolved</th><th class="col-report-actions">Decision</th></tr></thead>
         <tbody>${appeals.map((appeal) => `<tr>
           <td>${fmt(appeal.createdAt)}</td>
           <td>${peerCell(appeal.peerId)}</td>
           <td>${esc(appeal.status)}</td>
           <td>${esc(appeal.text)}</td>
           <td>${fmt(appeal.resolvedAt)}</td>
-          <td class="actions">${appeal.status === 'open'
-            ? `<button class="primary js-unban-appeal" type="button" data-appeal="${esc(appeal.id)}" data-peer="${esc(appeal.peerId)}">Unban</button>`
-            : esc(appeal.resolutionAction || '-')}</td>
+          <td><div class="actions">${appeal.status === 'open'
+            ? `<button class="primary js-unban-appeal" type="button" data-appeal="${esc(appeal.id)}" data-peer="${esc(appeal.peerId)}">Unban</button><button class="ghost js-unban-appeal" type="button" data-action="reject" data-appeal="${esc(appeal.id)}" data-peer="${esc(appeal.peerId)}">Reject appeal</button>`
+            : esc(appeal.resolutionAction || '-')}</div></td>
         </tr>`).join('')}</tbody>
       </table></div>`;
     }
@@ -561,6 +609,10 @@
           metric('Overdue', s.overdue),
           metric('Warnings', s.warned_peers),
           metric('Bans', s.banned_peers),
+          metric('Resolved within 24h', s.resolved_within_24h),
+          metric('Resolved after 24h', s.resolved_after_24h),
+          metric('Resolved within 24h / %', s.resolved_within_24h_percent == null ? '—' : `${Number(s.resolved_within_24h_percent).toFixed(1)}%`),
+          metric('Median resolution time', s.median_resolution_seconds == null ? '—' : `${(Number(s.median_resolution_seconds) / 3600).toFixed(1)}h`),
         ].join('');
         state.data.reports = reports.reports || [];
         state.data.reported = reportedPeers.peers || [];
@@ -580,28 +632,30 @@
         render();
       });
     });
-    contentEl.addEventListener('click', (event) => {
-      const actionButton = event.target.closest('.js-act-peer');
-      if (actionButton) {
-        actPeer(
-          actionButton.dataset.peer,
-          actionButton.dataset.action,
-          actionButton.dataset.reports,
-          actionButton.dataset.reporters,
-        );
-        return;
-      }
-      const unbanButton = event.target.closest('.js-unban-appeal');
-      if (unbanButton) {
-        unbanAppeal(unbanButton.dataset.appeal, unbanButton.dataset.peer);
-      }
+    contentEl.addEventListener('click', async (event) => {
+      if (state.deciding) return;
+      const button = event.target.closest('.js-act-peer, .js-act-report, .js-unban-appeal');
+      if (!button) return;
+      state.deciding = true;
+      document.querySelector('#actionError').textContent = '';
+      try {
+        if (button.matches('.js-act-report')) {
+          await actReport(button.dataset.report, button.dataset.action);
+        } else if (button.matches('.js-act-peer')) {
+          await actPeer(button.dataset.peer, button.dataset.action, button.dataset.reports, button.dataset.reporters);
+        } else {
+          await unbanAppeal(button.dataset.appeal, button.dataset.peer, button.dataset.action || 'unban');
+        }
+      } catch (error) {
+        document.querySelector('#actionError').textContent = error.message;
+      } finally { state.deciding = false; }
     });
     document.querySelector('#saveToken').addEventListener('click', () => {
       sessionStorage.setItem('moderationToken', tokenInput.value.trim());
       load();
     });
     document.querySelector('#refresh').addEventListener('click', load);
-    setInterval(load, 60000);
+    setInterval(() => { if (!state.deciding) load(); }, 60000);
     load();
   </script>
 </body>

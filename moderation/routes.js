@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { policyActions, reportActions } from './workflow.js';
 
 export function registerModerationRoutes({
   app,
@@ -110,30 +111,34 @@ export function registerModerationRoutes({
     }
   });
 
-  app.post('/admin/moderation/appeals/:id/unban', requireAdminAuth, async (req, res) => {
+  const resolveAppeal = (action) => async (req, res) => {
     const appealId = normalizeStringValue(req.params.id, 256);
     const note = normalizeStringValue(req.body?.note, 2048) || '';
-    if (!appealId) {
+    if (!appealId || !note) {
       return res.status(400).json({ error: 'invalid_appeal' });
     }
     try {
-      const result = await observability.resolveModerationAppealWithUnban({
+      const result = await observability.resolveModerationAppeal({
         appealId,
+        action,
         note,
         actor: 'moderator',
       });
       if (!result) {
         return res.status(404).json({ error: 'appeal_not_found' });
       }
-      const delivery = notifyModerationPolicy
-        ? await notifyModerationPolicy({ score: result.score, action: 'unban', note })
+      const delivery = action === 'unban' && notifyModerationPolicy
+        ? await notifyModerationPolicy({ score: result.score, action, note })
         : null;
       return res.json({ ok: true, ...result, delivery });
     } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
       console.warn('[push][moderation] appeal unban failed:', error instanceof Error ? error.message : String(error));
       return res.status(503).json({ error: 'moderation_storage_unavailable' });
     }
-  });
+  };
+  app.post('/admin/moderation/appeals/:id/unban', requireAdminAuth, resolveAppeal('unban'));
+  app.post('/admin/moderation/appeals/:id/reject', requireAdminAuth, resolveAppeal('reject'));
 
   app.get('/admin/reports', requireAdminAuth, async (req, res) => {
     const status = normalizeModerationStatus(req.query.status);
@@ -155,7 +160,7 @@ export function registerModerationRoutes({
     const peerId = normalizePeerId(req.params.peerId);
     const action = normalizeModerationAction(req.body?.action);
     const note = normalizeStringValue(req.body?.note, 2048) || '';
-    if (!peerId || !action) {
+    if (!peerId || !policyActions.includes(action) || !note) {
       return res.status(400).json({ error: 'invalid_action' });
     }
     try {
@@ -170,6 +175,7 @@ export function registerModerationRoutes({
         : null;
       return res.json({ ok: true, score, delivery });
     } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
       console.warn('[push][moderation] peer action failed:', error instanceof Error ? error.message : String(error));
       return res.status(503).json({ error: 'moderation_storage_unavailable' });
     }
@@ -213,7 +219,7 @@ export function registerModerationRoutes({
     const reportId = normalizeStringValue(req.params.id, 256);
     const action = normalizeModerationAction(req.body?.action);
     const note = normalizeStringValue(req.body?.note, 2048) || '';
-    if (!reportId || !action) {
+    if (!reportId || !reportActions.includes(action) || !note) {
       return res.status(400).json({ error: 'invalid_action' });
     }
     try {
@@ -226,11 +232,12 @@ export function registerModerationRoutes({
       if (!result) {
         return res.status(404).json({ error: 'report_not_found' });
       }
-      const delivery = notifyModerationPolicy
+      const delivery = action !== 'dismiss' && notifyModerationPolicy
         ? await notifyModerationPolicy({ score: result.score, action, note })
         : null;
       return res.json({ ok: true, ...result, delivery });
     } catch (error) {
+      if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
       console.warn('[push][moderation] action failed:', error instanceof Error ? error.message : String(error));
       return res.status(503).json({ error: 'moderation_storage_unavailable' });
     }
