@@ -647,8 +647,10 @@ export class PushObservability {
       const result = await this.pool.query(
         `select
            count(*)::int as total,
-           count(*)::int as pending,
-           0::int as processed,
+           count(*) filter (where action_at is null)::int as pending,
+           count(*) filter (where action_at is not null)::int as processed,
+           count(*) filter (where action_at is null and received_at <= now() - interval '20 hours' and received_at >= now() - interval '24 hours')::int as approaching_24h,
+           count(*) filter (where action_at is null and received_at < now() - interval '24 hours')::int as overdue,
            0::int as appealed
          from moderation_reports`,
       );
@@ -661,13 +663,18 @@ export class PushObservability {
       return { ...result.rows[0], ...peers.rows[0], remaining: result.rows[0].pending };
     }
     const reports = [...this.moderationReports.values()];
+    const pending = reports.filter((report) => !report.actionAt);
+    const now = Date.now();
+    const age = (report) => now - new Date(report.receivedAt).getTime();
     const scores = new Map(reports.map((report) => [report.reportedPeerId, this.memoryModerationStatus(report.reportedPeerId)]));
     return {
       total: reports.length,
-      pending: reports.length,
-      processed: 0,
+      pending: pending.length,
+      processed: reports.length - pending.length,
+      approaching_24h: pending.filter((report) => age(report) >= 20 * 3600000 && age(report) <= 24 * 3600000).length,
+      overdue: pending.filter((report) => age(report) > 24 * 3600000).length,
       appealed: 0,
-      remaining: reports.length,
+      remaining: pending.length,
       warned_peers: [...scores.values()].filter((score) => score.policyState === 'warning').length,
       banned_peers: [...scores.values()].filter((score) => score.policyState === 'banned').length,
     };
@@ -677,6 +684,8 @@ export class PushObservability {
     if (this.dbReady) {
       const filters = [];
       const values = [];
+      if (status === 'pending') filters.push('action_at is null');
+      if (status === 'processed') filters.push('action_at is not null');
       if (reportedPeerId) {
         values.push(reportedPeerId);
         filters.push(`reported_peer_id = $${values.length}`);
@@ -690,6 +699,8 @@ export class PushObservability {
       return result.rows.map(mapModerationReport);
     }
     return [...this.moderationReports.values()]
+      .filter((report) => status !== 'pending' || !report.actionAt)
+      .filter((report) => status !== 'processed' || !!report.actionAt)
       .filter((report) => !reportedPeerId || report.reportedPeerId === reportedPeerId)
       .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
       .slice(0, limit);
@@ -830,6 +841,14 @@ export class PushObservability {
       } finally {
         client.release();
       }
+    }
+    const at = nowIso();
+    for (const report of this.moderationReports.values()) {
+      if (report.reportedPeerId !== peerId) continue;
+      report.action = action;
+      report.actionNote = note || null;
+      report.actionAt = at;
+      report.auditHistory.push({ at, action, actor, note: note || null });
     }
     return this.recordMemoryPeerPolicy(peerId, action);
   }

@@ -255,8 +255,8 @@ These endpoints require `Authorization: Bearer <MODERATION_ADMIN_TOKEN>`.
 If `MODERATION_ADMIN_TOKEN` is omitted, the server falls back to
 `PUSH_API_TOKEN`.
 
-- `GET /admin/moderation/summary` — total reports and warned/banned peer counts
-- `GET /admin/reports` — metadata-only report list for moderator UI
+- `GET /admin/moderation/summary` — total, pending/processed, approaching_24h, overdue and warned/banned peer counts
+- `GET /admin/reports?status=pending|processed|all` — metadata-only report list for moderator UI
 - `GET /admin/moderation/reported-peers` — aggregate list of users who were reported, with total/direct/group report counts
 - `GET /admin/moderation/reporters` — aggregate list of users who filed reports, with total/direct/group report counts
 - `GET /admin/moderation/peer-scores?sort=report_count_desc|state_desc|last_report_desc` — sortable peer score list
@@ -269,6 +269,14 @@ Manual `warn`/`ban`/`unban` actions send a best-effort `moderation_policy` push 
 target peer. The moderator UI uses a dark tabbed layout for `Incoming Reports`,
 `Reported Users`, `Reporters`, and `Appeals`; long Peer IDs are shortened to
 `prefix...suffix`, and each table is paginated at 20 rows.
+
+Incoming Reports shows pending reports (no `action_at`), received time, age and
+24-hour SLA. Warning starts at 20 hours; reports older than 24 hours are OVERDUE.
+Summary counters cover the entire queue, independently of the 500-row list limit.
+The dashboard refreshes every minute. Existing moderator actions resolve the
+affected reports; later reports require a new decision even for a warned/banned peer.
+Client Block and Report uses the same signed metadata-only `/moderation/reports`
+endpoint and appears in Incoming Reports. No private message content is collected.
 
 The moderator UI pre-fills the action note with the current report count and
 unique reporter count without exposing reporter Peer IDs. `Warn`, `Ban`, and

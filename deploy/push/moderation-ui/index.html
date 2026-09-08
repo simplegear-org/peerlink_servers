@@ -471,9 +471,10 @@
       const reports = pageItems(items);
       if (!items.length) return '<div class="empty">No reports</div>';
       return `<div class="table-wrap"><table>
-        <thead><tr><th class="col-date">Received</th><th class="col-peer">Reported peer</th><th class="col-peer">Reporter</th><th>Reason</th><th class="col-small">Type</th><th class="col-small">Content</th></tr></thead>
+        <thead><tr><th class="col-date">Received</th><th>Age / SLA</th><th class="col-peer">Reported peer</th><th class="col-peer">Reporter</th><th>Reason</th><th class="col-small">Type</th><th class="col-small">Content</th></tr></thead>
         <tbody>${reports.map((report) => `<tr>
           <td>${fmt(report.receivedAt)}</td>
+          <td>${reportSla(report)}</td>
           <td>${peerCell(report.reportedPeerId)}</td>
           <td>${peerCell(report.reporterPeerId)}</td>
           <td>${esc(report.reason)}</td>
@@ -481,6 +482,17 @@
           <td>metadata only</td>
         </tr>`).join('')}</tbody>
       </table></div>`;
+    }
+
+    function reportSla(report) {
+      if (report.actionAt) return 'Processed';
+      const age = Math.max(0, Date.now() - new Date(report.receivedAt).getTime());
+      if (!Number.isFinite(age)) return 'Unknown';
+      const hours = Math.floor(age / 3600000);
+      const minutes = Math.floor(age / 60000) % 60;
+      const status = age > 24 * 3600000 ? 'OVERDUE' : age >= 20 * 3600000 ? 'Approaching 24h' : 'Pending';
+      const cls = age > 24 * 3600000 ? 'banned' : age >= 20 * 3600000 ? 'warning' : '';
+      return `${hours}h ${minutes}m <span class="badge ${cls}">${status}</span>`;
     }
 
     function renderPeerAggregate(items, emptyText, withActions) {
@@ -536,7 +548,7 @@
       try {
         const [summary, reports, reportedPeers, reporters, appeals] = await Promise.all([
           getJson('/admin/moderation/summary'),
-          getJson('/admin/reports?limit=500'),
+          getJson('/admin/reports?status=pending&limit=500'),
           getJson('/admin/moderation/reported-peers?limit=500'),
           getJson('/admin/moderation/reporters?limit=500'),
           getJson('/admin/moderation/appeals?status=all&limit=500'),
@@ -544,6 +556,9 @@
         const s = summary.summary || {};
         metricsEl.innerHTML = [
           metric('Reports', s.total),
+          metric('Reports requiring action', s.pending),
+          metric('Approaching 24h', s.approaching_24h),
+          metric('Overdue', s.overdue),
           metric('Warnings', s.warned_peers),
           metric('Bans', s.banned_peers),
         ].join('');
@@ -586,6 +601,7 @@
       load();
     });
     document.querySelector('#refresh').addEventListener('click', load);
+    setInterval(load, 60000);
     load();
   </script>
 </body>

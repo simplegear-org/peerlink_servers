@@ -402,6 +402,7 @@ function normalizeTimestamp(value) {
 function normalizeModerationStatus(value) {
   const status = normalizeStringValue(value, 32)?.toLowerCase();
   if (!status || status === 'all') return 'all';
+  if (status === 'pending' || status === 'processed') return status;
   return ['pending', 'resolved', 'rejected', 'appealed'].includes(status) ? 'all' : null;
 }
 
