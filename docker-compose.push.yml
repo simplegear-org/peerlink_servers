@@ -1,9 +1,22 @@
 services:
+  invite:
+    build:
+      context: .
+      target: invite
+    container_name: peerlink-invite
+    restart: always
+    expose:
+      - "4600"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - invite-data:/data
+
   push:
     build:
       context: .
       target: push
-    image: ${PUSH_IMAGE:-tangash/push:1.6.4-2026090802}
+    image: ${PUSH_IMAGE:-tangash/push:1.7.0-2026091001}
     container_name: push
     restart: always
     expose:
@@ -42,7 +55,7 @@ services:
     build:
       context: .
       target: server-checker
-    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.6.4-2026090802}
+    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.7.0-2026091001}
     container_name: peerlink-server-checker
     restart: always
     depends_on:
@@ -146,6 +159,7 @@ services:
         done
 
 volumes:
+  invite-data:
   push-observability-db:
   push-prometheus:
   push-grafana:

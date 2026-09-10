@@ -4,6 +4,7 @@ This repository contains a set of server services for PeerLink:
 - `relay` — HTTP relay and blob API (store/fetch/ack + group fan-out + blob upload)
 - `signal` — bootstrap signaling server
 - `push` — push delivery service via Firebase Cloud Messaging (FCM)
+- `invite` — persistent signed short-token contact-invite service
 - `coturn` — TURN server for WebRTC, with optional TURNS on 5349
 - `haproxy` — reverse proxy and TLS termination
 
@@ -72,6 +73,24 @@ This is the bootstrap signaling server with:
 - stable `peers_request` snapshots (online peers only)
 - server-side `lastSeenMs` in peers snapshots
 - push `presence_update` events for `online/offline` transitions
+
+### invite
+
+File: `invite.js`
+
+The invite service is exposed by the push proxy at `https://PUBLIC_HOST/invites`:
+
+- `POST /invites` accepts a canonical Ed25519-signed version-1 manifest;
+- `GET /invites/:token` repeatedly resolves a live manifest;
+- tokens are 32 random bytes encoded as base64url; the default TTL is 30 days;
+- the server adds `inviteId` and `expiration`, persists records atomically and
+  restores only still-valid, signature-verified records after restart;
+- creation is rate-limited both at the proxy and service level.
+
+The manifest contains inviter `peerId`, signed identity bundle, optional
+display `username`, and optional server metadata. It never carries chat
+content, encryption keys, or an account credential. The app shares only
+`https://simplegear.org/i/<token>`; the landing route is a separate web task.
 
 ### push
 

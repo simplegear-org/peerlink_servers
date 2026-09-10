@@ -4,6 +4,7 @@
 - `relay` — HTTP relay и blob API (`store/fetch/ack`, `group/store`, `blob upload/download`)
 - `signal` — bootstrap signaling сервер
 - `push` — сервер отправки push через Firebase Cloud Messaging (FCM)
+- `invite` — persistent service коротких подписанных contact-invite
 - `coturn` — TURN сервер для WebRTC, с опциональным TURNS на 5349
 - `haproxy` — reverse proxy и TLS termination
 
@@ -71,6 +72,25 @@
 - стабильные snapshots по `peers_request` (только реально онлайн peerId)
 - серверный `lastSeenMs` в snapshots `peers`
 - push `presence_update` для переходов `online/offline`
+
+### invite
+
+Файл: `invite.js`
+
+Invite service публикуется push-proxy по адресу
+`https://PUBLIC_HOST/invites`:
+
+- `POST /invites` принимает canonical Ed25519-подписанный manifest версии 1;
+- `GET /invites/:token` повторно resolve-ит действующий manifest;
+- token — 32 random bytes в base64url, default TTL — 30 дней;
+- сервер добавляет `inviteId` и `expiration`, atomically сохраняет records и
+  после restart восстанавливает только неистёкшие manifest с валидной подписью;
+- создание ограничено rate limit на proxy и service уровнях.
+
+Manifest содержит `peerId` пригласившего, подписанный identity bundle,
+optional display `username` и optional server metadata. В нём никогда нет
+chat content, encryption keys или account credential. Приложение шарит только
+`https://simplegear.org/i/<token>`; landing route — отдельная web-задача.
 
 ### push
 

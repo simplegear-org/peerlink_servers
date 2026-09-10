@@ -7,7 +7,7 @@ COMPOSE_FILE="$ROOT_DIR/docker-compose.push.yml"
 ENV_FILE="${PEERLINK_PUSH_ENV_FILE:-$ROOT_DIR/.env.push.local}"
 BRANCH="${PEERLINK_PUSH_BRANCH:-main}"
 REMOTE="${PEERLINK_PUSH_REMOTE:-origin}"
-RUNTIME_SERVICES=(push server-checker push-observability-db prometheus grafana moderation-ui push-proxy certbot-renewer)
+RUNTIME_SERVICES=(invite push server-checker push-observability-db prometheus grafana moderation-ui push-proxy certbot-renewer)
 
 SUDO=""
 if [[ "${EUID}" -ne 0 ]] && ! docker info >/dev/null 2>&1; then
@@ -74,6 +74,9 @@ main() {
   echo
   echo "Recent push logs:"
   compose logs --tail=40 push
+  echo
+  echo "Recent invite logs:"
+  compose logs --tail=40 invite
   echo
   echo "Recent server-checker logs:"
   compose logs --tail=40 server-checker

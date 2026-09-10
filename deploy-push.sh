@@ -11,7 +11,7 @@ NGINX_DIR="$DEPLOY_DIR/nginx/conf.d"
 MODERATION_UI_DIR="$DEPLOY_DIR/moderation-ui"
 WEBROOT_DIR="$DEPLOY_DIR/certbot/www"
 LETSENCRYPT_DIR="$DEPLOY_DIR/letsencrypt"
-PUSH_RUNTIME_SERVICES=(push server-checker push-observability-db prometheus grafana moderation-ui push-proxy)
+PUSH_RUNTIME_SERVICES=(invite push server-checker push-observability-db prometheus grafana moderation-ui push-proxy)
 
 SUDO=""
 if [[ "${EUID}" -ne 0 ]]; then
@@ -294,6 +294,27 @@ install_cloudflare_origin_cert() {
 
 write_push_locations() {
   cat <<'EOF_LOCATIONS'
+    location = /invites {
+        limit_req zone=invite_create burst=10 nodelay;
+        limit_except POST { deny all; }
+        proxy_pass http://invite:4600/invites;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/invites/[A-Za-z0-9_-]{22,128}$ {
+        limit_except GET { deny all; }
+        proxy_pass http://invite:4600;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location = /health {
         limit_except GET { deny all; }
         proxy_pass http://push:4500/health;
@@ -412,6 +433,8 @@ EOF_LOCATIONS
 
 write_http_only_nginx_config() {
   cat > "$NGINX_DIR/push.conf" <<EOF_HTTP
+limit_req_zone \$binary_remote_addr zone=invite_create:10m rate=1r/m;
+
 server {
     listen 80;
     listen [::]:80;
@@ -430,6 +453,8 @@ EOF_HTTP
 
 write_tls_nginx_config() {
   cat > "$NGINX_DIR/push.conf" <<EOF_TLS
+limit_req_zone \$binary_remote_addr zone=invite_create:10m rate=1r/m;
+
 server {
     listen 80;
     listen [::]:80;
