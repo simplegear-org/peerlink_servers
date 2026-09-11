@@ -8,6 +8,13 @@ import { verifyEd25519Signature } from './security/signed-requests.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.INVITE_BODY_LIMIT || '128kb' }));
+app.use((req, res, next) => {
+  if (req.get('origin') === 'https://simplegear.org') {
+    res.set('Access-Control-Allow-Origin', 'https://simplegear.org');
+    res.set('Vary', 'Origin');
+  }
+  next();
+});
 
 const port = Number.parseInt(process.env.PORT || '4600', 10);
 const ttlMs = Number.parseInt(process.env.INVITE_TTL_MS || `${30 * 24 * 60 * 60 * 1000}`, 10);

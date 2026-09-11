@@ -90,7 +90,9 @@ Invite service публикуется push-proxy по адресу
 Manifest содержит `peerId` пригласившего, подписанный identity bundle,
 optional display `username` и optional server metadata. В нём никогда нет
 chat content, encryption keys или account credential. Приложение шарит только
-`https://simplegear.org/i/<token>`; landing route — отдельная web-задача.
+`https://simplegear.org/i/<token>`. Публичный `GET /invites/:token` разрешает
+CORS только для `https://simplegear.org`: landing page показывает валидный
+optional display name и store fallback, не выводя технические поля.
 
 ### push
 
@@ -386,6 +388,19 @@ apt-get update && apt-get install -y ca-certificates curl && curl -fsSL https://
 - запускает отдельный контейнер с циклом автопродления
 - умеет `PUSH_TLS_PROVIDER=cloudflare_origin` с Cloudflare Origin CA вместо certbot для оранжевого облака
 - запускает Postgres, Prometheus, Grafana и checker для мониторинга push/server discovery
+- проверяет generated nginx configuration до активации, использует dynamic
+  Docker DNS для upstream и ждёт готовности push/proxy перед завершением.
+
+Для обновления уже развернутого push-сервера без повторной настройки хоста:
+
+```bash
+chmod +x deploy-push.sh update-push.sh
+./update-push.sh
+```
+
+`update-push.sh` получает настроенную ветку, сохраняет `.env.push.local` и
+делегирует rollout сервисов, nginx validation, TLS и readiness checks в
+`deploy-push.sh`.
 
 Публичный endpoint push API:
 

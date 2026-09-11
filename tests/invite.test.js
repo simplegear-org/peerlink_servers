@@ -57,8 +57,11 @@ test('invite persists a signed manifest and rejects a forged one', async () => {
     const created = await fetch(`${server.base}/invites`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert.equal(created.status, 201);
     const { token } = await created.json();
-    const resolved = await fetch(`${server.base}/invites/${token}`);
+    const resolved = await fetch(`${server.base}/invites/${token}`, {
+      headers: { origin: 'https://simplegear.org' },
+    });
     assert.equal(resolved.status, 200);
+    assert.equal(resolved.headers.get('access-control-allow-origin'), 'https://simplegear.org');
     const resolvedManifest = await resolved.json();
     assert.equal(resolvedManifest.inviter.username, 'Alice');
     assert.equal(typeof resolvedManifest.inviteId, 'string');

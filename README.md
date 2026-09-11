@@ -90,7 +90,10 @@ The invite service is exposed by the push proxy at `https://PUBLIC_HOST/invites`
 The manifest contains inviter `peerId`, signed identity bundle, optional
 display `username`, and optional server metadata. It never carries chat
 content, encryption keys, or an account credential. The app shares only
-`https://simplegear.org/i/<token>`; the landing route is a separate web task.
+`https://simplegear.org/i/<token>`. The public `GET /invites/:token` response
+allows CORS only for `https://simplegear.org`, so its landing page can render
+the validated optional display name and store fallback without exposing
+technical fields in its UI.
 
 ### push
 
@@ -317,6 +320,19 @@ apt-get update && apt-get install -y ca-certificates curl && curl -fsSL https://
 - switches `nginx` to HTTPS
 - starts a long-running renew loop in a separate container
 - can use `PUSH_TLS_PROVIDER=cloudflare_origin` with Cloudflare Origin CA instead of certbot for orange-cloud proxy
+- validates generated nginx configuration before activation, resolves Docker
+  service names dynamically, and waits for push/proxy readiness.
+
+To update an existing push deployment without repeating host setup:
+
+```bash
+chmod +x deploy-push.sh update-push.sh
+./update-push.sh
+```
+
+`update-push.sh` fetches the configured branch, preserves `.env.push.local`,
+and delegates service rollout, nginx validation, TLS handling, and readiness
+checks to `deploy-push.sh`.
 
 The push API is exposed at:
 
