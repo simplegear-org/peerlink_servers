@@ -48,6 +48,11 @@ This service stores signed relay envelopes and allows clients to:
 - fan-out one signed group envelope to recipient list (`/relay/group/store`),
 - upload/fetch encrypted blobs (`/relay/blob/*`), including chunked upload.
 
+Relay state is durable by default: Compose mounts the named `relay-data` volume
+at `/app/data/relay`. Messages, blobs, incomplete uploads, group membership and
+ACK tombstones survive process/container/host restarts. Snapshots are published
+atomically; retention is enforced at startup and periodically afterwards.
+
 It does not handle peer registration or signaling.
 
 Relay health model:
@@ -216,14 +221,14 @@ Configures HTTPS termination only for `signal` and `relay`.
 
 ## Quick start
 
-For a reproducible source deployment, check out the public source tag and build
-the containers from that source:
+For a reproducible deployment, check out the public source tag and pull its
+versioned CI images:
 
 ```bash
 git clone https://github.com/simplegear-org/peerlink_servers.git
 cd peerlink_servers
 git checkout source-v1.1.0
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
@@ -236,17 +241,17 @@ wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main
 To bootstrap a specific public source tag:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash -s -- https://github.com/simplegear-org/peerlink_servers.git source-v1.1.0
+wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash -s -- source-v1.1.0
 ```
 
-### Source-build and official image modes
+### CI image and source-build modes
 
-The default public self-hosted model is source-build mode: `docker-compose.yml`
-and `docker-compose.push.yml` build PeerLink server containers from the current
-checked-out source tree.
+The default public self-hosted model pulls versioned CI images for relay and
+signal. `docker-compose.yml` pins their release tags; override `RELAY_IMAGE`
+or `SIGNAL_IMAGE` with an immutable digest when needed.
 
-Official prebuilt image mode may still be used by setting image variables such
-as `PUSH_IMAGE`, but release deployments should use version-specific image tags
+The push stack also pulls CI images (`INVITE_IMAGE`, `PUSH_IMAGE` and
+`SERVER_CHECKER_IMAGE`); release deployments should use version-specific tags
 or immutable digests, not floating `latest` tags.
 
 The runtime source metadata must describe the actual running source. Official
@@ -278,7 +283,7 @@ The dedicated push stack now includes:
 Use dedicated file for the push stack:
 
 ```bash
-docker compose -f docker-compose.push.yml build
+docker compose -f docker-compose.push.yml pull
 docker compose -f docker-compose.push.yml up -d
 ```
 
@@ -330,9 +335,9 @@ chmod +x deploy-push.sh update-push.sh
 ./update-push.sh
 ```
 
-`update-push.sh` fetches the configured branch, preserves `.env.push.local`,
-and delegates service rollout, nginx validation, TLS handling, and readiness
-checks to `deploy-push.sh`.
+`update-push.sh` is a standalone protected rollout: it preserves
+`.env.push.local`, restores its operational copy after the Git sync, validates
+nginx before activation and performs TLS/readiness checks itself.
 
 The push API is exposed at:
 
@@ -421,6 +426,39 @@ Run:
 ```bash
 ./deploy.sh
 ```
+
+### Updating bootstrap, relay and TURN
+
+For an already deployed base stack, use `update-server.sh`; it uses only the
+public source mirror, pulls versioned relay/signal images before rollout, recreates the stack
+and verifies relay plus HAProxy health:
+
+```bash
+./update-server.sh
+```
+
+`deploy.sh` installs a local systemd timer by default. It checks every six
+hours (with a randomized delay) for a fast-forward, tagged `source-v*` release
+in `https://github.com/simplegear-org/peerlink_servers.git` and invokes
+`update-server.sh` with that exact tag. Untagged, non-fast-forward and major
+updates are rejected by default. The owner controls it in
+`/etc/peerlink-server-updater/config.env`:
+
+```bash
+PEERLINK_AUTO_UPDATE_ENABLED=true   # default
+PEERLINK_AUTO_UPDATE_REQUIRE_SIGNED_TAG=false
+PEERLINK_AUTO_UPDATE_ALLOW_MAJOR=false
+```
+
+To change only the switch, run:
+
+```bash
+./install-auto-update.sh --enable
+./install-auto-update.sh --disable
+```
+
+The timer is local to the server; it is not a central control plane. A release
+must be tagged in the public mirror before it can be installed automatically.
 
 By default:
 - `PUBLIC_IP` is detected automatically; if detection fails it uses `127.0.0.1`

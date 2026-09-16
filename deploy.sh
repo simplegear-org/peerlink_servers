@@ -199,7 +199,12 @@ no-tlsv1_1
 simple-log
 log-file=stdout
 EOF"
-sudo docker-compose up -d --build --force-recreate --remove-orphans relay signal haproxy coturn
+sudo docker-compose pull relay signal haproxy coturn
+sudo docker-compose up -d --force-recreate --remove-orphans relay signal haproxy coturn
 
-stage "11" "Deployment complete!"
+stage "11" "Installing verified auto-update timer"
+chmod +x install-auto-update.sh auto-update.sh update-server.sh
+./install-auto-update.sh --install
+
+stage "12" "Deployment complete!"
 echo "Deployment complete!"

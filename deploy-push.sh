@@ -804,6 +804,9 @@ main() {
     validate_nginx_config
 
     compose pull \
+      invite \
+      push \
+      server-checker \
       push-proxy \
       push-observability-db \
       prometheus \
@@ -814,7 +817,6 @@ main() {
 
     compose up \
       -d \
-      --build \
       --remove-orphans \
       "${PUSH_RUNTIME_SERVICES[@]}"
 
@@ -828,6 +830,9 @@ main() {
     validate_nginx_config
 
     compose pull \
+      invite \
+      push \
+      server-checker \
       push-proxy \
       certbot-renewer \
       push-observability-db \
@@ -837,7 +842,6 @@ main() {
 
     compose up \
       -d \
-      --build \
       --remove-orphans \
       "${PUSH_RUNTIME_SERVICES[@]}" \
       certbot-renewer
@@ -852,6 +856,9 @@ main() {
     validate_nginx_config
 
     compose pull \
+      invite \
+      push \
+      server-checker \
       push-proxy \
       certbot \
       certbot-renewer \
@@ -862,7 +869,6 @@ main() {
 
     compose up \
       -d \
-      --build \
       --remove-orphans \
       "${PUSH_RUNTIME_SERVICES[@]}"
 
@@ -892,7 +898,6 @@ main() {
 
     compose up \
       -d \
-      --build \
       --remove-orphans \
       "${PUSH_RUNTIME_SERVICES[@]}" \
       certbot-renewer

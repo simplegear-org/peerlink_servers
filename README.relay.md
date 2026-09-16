@@ -23,6 +23,22 @@ Presence (online/last-seen) is implemented by the signaling service (`signal.js`
 
 - `relay.js`
 
+## Durable storage and retention
+
+`relay-storage.js` persists relay messages, blobs, incomplete chunk uploads,
+group membership and ACK tombstones in `RELAY_DATA_DIR` (default
+`data/relay`). Docker Compose uses the `relay-data` named volume, so ordinary
+container recreation does not erase relay replicas.
+
+Snapshots are written through a same-directory temporary file, `fsync` and
+atomic rename. Interrupted temporary snapshots are discarded on startup.
+Expired messages, blobs and incomplete uploads are pruned by their TTL;
+membership defaults to 30 days and leaves a bounded expiry tombstone until a
+signed owner update restores it. Tune `RELAY_ACK_TOMBSTONE_TTL_SECONDS`,
+`RELAY_GROUP_MEMBERSHIP_TTL_SECONDS` and
+`RELAY_GROUP_MEMBERSHIP_EXPIRED_TOMBSTONE_TTL_SECONDS` only when the matching
+retention policy is understood.
+
 ## Relay HTTP API
 
 ### `GET /health`

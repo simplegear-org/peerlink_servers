@@ -6,9 +6,9 @@
 
 set -e
 
-REPO_URL=${1:-https://github.com/simplegear-org/peerlink_servers.git}
-REF=${2:-main}
-DIR_NAME=${3:-peerlink_servers}
+REPO_URL="https://github.com/simplegear-org/peerlink_servers.git"
+REF=${1:-main}
+DIR_NAME=${2:-peerlink_servers}
 STAGE_PREFIX="__PEERLINK_STAGE__"
 
 stage() {
@@ -26,7 +26,7 @@ cd "$DIR_NAME"
 git checkout "$REF"
 
 echo "Making deploy.sh executable..."
-chmod +x deploy.sh
+chmod +x deploy.sh install-auto-update.sh update-server.sh
 
 stage "4" "Running deploy"
 ./deploy.sh

@@ -34,12 +34,11 @@ For servers that keep this checkout on the host, apply an update with one comman
 ./update-push.sh
 ```
 
-The script loads `.env.push.local`, resets the local checkout to `origin/main`,
-pulls the images referenced by the updated
-`docker-compose.push.yml`, rebuilds local `push`/`server-checker` images, runs
-`docker compose up -d --build`, restarts `push-proxy` and `moderation-ui`
-so nginx resolves fresh upstream container IPs, shows container status and
-prints recent `push`/`server-checker` logs.
+The script is a standalone protected rollout: it preserves `.env.push.local`,
+restores its operational copy after Git sync, validates nginx before activation
+and performs its own TLS/readiness checks. It pulls versioned `invite`, `push`
+and `server-checker` CI images; it does not build locally or delegate to
+`deploy-push.sh`.
 
 ## Endpoints
 

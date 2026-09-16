@@ -3,6 +3,13 @@
 import express from 'express';
 import crypto from 'crypto';
 import { sourceInfo } from './source-info.js';
+import {
+  RelayAckTombstoneStore,
+  RelayBlobStore,
+  RelayBlobUploadStore,
+  RelayGroupMembershipStore,
+  RelayMessageStore,
+} from './relay-storage.js';
 
 const app = express();
 app.use(express.json({ limit: process.env.RELAY_BODY_LIMIT || '20mb' }));
@@ -11,12 +18,26 @@ const sourceMetadata = sourceInfo();
 const PORT = process.env.PORT || 4000;
 const TTL_SECONDS = Number.parseInt(process.env.RELAY_TTL_SECONDS || '86400', 10);
 const UPLOAD_TTL_SECONDS = Number.parseInt(process.env.RELAY_UPLOAD_TTL_SECONDS || '21600', 10);
+const ACK_TOMBSTONE_TTL_SECONDS = Number.parseInt(
+  process.env.RELAY_ACK_TOMBSTONE_TTL_SECONDS || String(TTL_SECONDS),
+  10,
+);
+const GROUP_MEMBERSHIP_TTL_SECONDS = Number.parseInt(
+  process.env.RELAY_GROUP_MEMBERSHIP_TTL_SECONDS || '2592000',
+  10,
+);
+const GROUP_MEMBERSHIP_EXPIRED_TOMBSTONE_TTL_SECONDS = Number.parseInt(
+  process.env.RELAY_GROUP_MEMBERSHIP_EXPIRED_TOMBSTONE_TTL_SECONDS
+    || String(GROUP_MEMBERSHIP_TTL_SECONDS),
+  10,
+);
+const RELAY_DATA_DIR = process.env.RELAY_DATA_DIR || 'data/relay';
 
-const store = new Map(); // recipientId -> [{ envelope, insertedAtMs }]
-const blobs = new Map(); // blobId -> { blob, insertedAtMs }
-const blobUploads = new Map(); // uploadKey -> { meta, chunks: Map<int, Buffer>, insertedAtMs }
-const groupMemberships = new Map(); // groupId -> { ownerPeerId, memberPeerIds:Set<string>, updatedAtMs, provisional?: boolean }
-const acked = new Set(); // ${to}|${id}
+const store = new RelayMessageStore(RELAY_DATA_DIR); // recipientId -> [{ envelope, insertedAtMs }]
+const blobs = new RelayBlobStore(RELAY_DATA_DIR); // blobId -> { blob, insertedAtMs }
+const blobUploads = new RelayBlobUploadStore(RELAY_DATA_DIR); // uploadKey -> { meta, chunks: Map<int, Buffer>, insertedAtMs }
+const groupMemberships = new RelayGroupMembershipStore(RELAY_DATA_DIR); // groupId -> { ownerPeerId, memberPeerIds:Set<string>, updatedAtMs, provisional?: boolean }
+const acked = new RelayAckTombstoneStore(RELAY_DATA_DIR); // ${to}|${id} -> ackedAtMs
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 const nowMs = () => Date.now();
@@ -55,6 +76,38 @@ function pruneUploads() {
       blobUploads.delete(key);
     }
   }
+}
+
+function pruneAckTombstones() {
+  const cutoff = nowMs() - ACK_TOMBSTONE_TTL_SECONDS * 1000;
+  for (const [key, ackedAtMs] of acked.entries()) {
+    if (!Number.isFinite(ackedAtMs) || ackedAtMs < cutoff) {
+      acked.delete(key);
+    }
+  }
+}
+
+function pruneGroupMemberships() {
+  const now = nowMs();
+  const cutoff = now - GROUP_MEMBERSHIP_TTL_SECONDS * 1000;
+  const tombstoneCutoff = now - GROUP_MEMBERSHIP_EXPIRED_TOMBSTONE_TTL_SECONDS * 1000;
+  for (const [groupId, membership] of groupMemberships.entries()) {
+    if (Number.isFinite(membership.expiredAtMs)) {
+      if (membership.expiredAtMs < tombstoneCutoff) groupMemberships.delete(groupId);
+    } else if (!Number.isFinite(membership.updatedAtMs) || membership.updatedAtMs < cutoff) {
+      groupMemberships.set(groupId, { expiredAtMs: now });
+    }
+  }
+}
+
+function prunePersistentState() {
+  for (const recipient of store.keys()) {
+    pruneRecipient(recipient);
+  }
+  pruneBlobs();
+  pruneUploads();
+  pruneAckTombstones();
+  pruneGroupMemberships();
 }
 
 function envelopeKey(to, id) {
@@ -276,6 +329,7 @@ app.post('/relay/store', (req, res) => {
     return res.status(401).json({ error: 'invalid signature' });
   }
 
+  pruneAckTombstones();
   const key = envelopeKey(to, id);
   if (acked.has(key)) {
     return res.json({ ok: true, stored: false, duplicate: true });
@@ -353,7 +407,12 @@ app.post('/relay/group/store', (req, res) => {
     return res.status(401).json({ error: 'invalid signature' });
   }
 
+  pruneAckTombstones();
+  pruneGroupMemberships();
   const membership = groupMemberships.get(groupId);
+  if (membership?.expiredAtMs) {
+    return res.status(409).json({ error: 'group membership expired; owner update required' });
+  }
   if (membership) {
     if (!membership.memberPeerIds.has(from)) {
       return res.status(403).json({ error: 'sender is not a group member' });
@@ -479,7 +538,7 @@ app.post('/relay/group/members/update', (req, res) => {
   }
 
   const existing = groupMemberships.get(groupId);
-  if (existing && existing.ownerPeerId !== ownerPeerId && !existing.provisional) {
+  if (existing && !existing.expiredAtMs && existing.ownerPeerId !== ownerPeerId && !existing.provisional) {
     return res.status(409).json({ error: 'owner mismatch' });
   }
 
@@ -821,7 +880,7 @@ app.post('/relay/ack', (req, res) => {
   }
 
   const key = envelopeKey(to, id);
-  acked.add(key);
+  acked.set(key, nowMs());
 
   const list = store.get(to);
   if (list && list.length) {
@@ -841,9 +900,7 @@ app.listen(PORT, () => {
 });
 
 setInterval(() => {
-  for (const recipient of store.keys()) {
-    pruneRecipient(recipient);
-  }
-  pruneBlobs();
-  pruneUploads();
+  prunePersistentState();
 }, 60_000).unref();
+
+prunePersistentState();

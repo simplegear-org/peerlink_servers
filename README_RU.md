@@ -47,6 +47,11 @@
 - `blob/upload`, `blob/upload/chunk`, `blob/upload/complete`, `blob/:blobId` для передачи payload.
 - relay-driven push hint для групповых сообщений с дедупликацией на стороне `push`.
 
+Состояние relay по умолчанию durable: Compose монтирует named volume
+`relay-data` в `/app/data/relay`. Messages, blobs, незавершённые uploads,
+group membership и ACK tombstones переживают process/container/host restart.
+Snapshots публикуются атомарно; retention выполняется при старте и периодически.
+
 Сервис не выполняет регистрацию peer и не обслуживает signaling.
 
 Модель проверки relay:
@@ -145,13 +150,9 @@ Security-логика push разнесена по отдельным модул
 ./update-push.sh
 ```
 
-Скрипт подгружает `.env.push.local`, сбрасывает checkout на `origin/main`,
-делает `docker compose pull` для внешних images из обновленного
-`docker-compose.push.yml`, пересобирает локальные `push`/`server-checker`,
-затем `docker compose up -d --build`,
-перезапускает `push-proxy` и `moderation-ui`, чтобы nginx заново разрешил
-актуальные IP контейнеров, и показывает статус с последними логами
-`push`/`server-checker`.
+`update-push.sh` — самостоятельный protected rollout: сохраняет
+`.env.push.local`, восстанавливает operational copy после Git sync, проверяет
+nginx до активации и самостоятельно выполняет TLS/readiness checks.
 
 Для write-endpoint’ов `push` используется relay-подобная Ed25519 проверка:
 - обязательные поля: `id`, `from`, `ts`, `sig`, `signingPub`
@@ -279,14 +280,14 @@ Corresponding Source, `SOURCE_CODE_URL` должен указывать на и�
 
 ## Быстрая установка
 
-Для воспроизводимого source deployment checkout-ните public source tag и
-соберите контейнеры из этого исходного кода:
+Для воспроизводимого deployment checkout-ните public source tag и получите его
+versioned CI images:
 
 ```bash
 git clone https://github.com/simplegear-org/peerlink_servers.git
 cd peerlink_servers
 git checkout source-v1.1.0
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
@@ -299,17 +300,17 @@ wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main
 Для установки конкретного public source tag:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash -s -- https://github.com/simplegear-org/peerlink_servers.git source-v1.1.0
+wget -qO- https://raw.githubusercontent.com/simplegear-org/peerlink_servers/main/bootstrap.sh | bash -s -- source-v1.1.0
 ```
 
-### Source-build и official image modes
+### CI image и source-build modes
 
-Default public self-hosted model — source-build mode: `docker-compose.yml` и
-`docker-compose.push.yml` собирают PeerLink server containers из текущего
-checked-out source tree.
+Default public self-hosted model получает versioned CI images для relay и
+signal. `docker-compose.yml` фиксирует release tags; при необходимости можно
+задать `RELAY_IMAGE` или `SIGNAL_IMAGE` как immutable digest.
 
-Official prebuilt image mode можно использовать через image variables вроде
-`PUSH_IMAGE`, но release deployment должен использовать version-specific image
+Push stack также получает CI images (`INVITE_IMAGE`, `PUSH_IMAGE` и
+`SERVER_CHECKER_IMAGE`); release deployment должен использовать version-specific
 tags или immutable digests, а не floating `latest` tags.
 
 Runtime source metadata должны описывать реально запущенный source. Official
@@ -344,7 +345,7 @@ npm run start:push
 Используйте отдельный файл для push-стека:
 
 ```bash
-docker compose -f docker-compose.push.yml build
+docker compose -f docker-compose.push.yml pull
 docker compose -f docker-compose.push.yml up -d
 ```
 
@@ -398,9 +399,9 @@ chmod +x deploy-push.sh update-push.sh
 ./update-push.sh
 ```
 
-`update-push.sh` получает настроенную ветку, сохраняет `.env.push.local` и
-делегирует rollout сервисов, nginx validation, TLS и readiness checks в
-`deploy-push.sh`.
+`update-push.sh` — самостоятельный protected rollout: сохраняет
+`.env.push.local`, восстанавливает operational copy после Git sync, проверяет
+nginx до активации и самостоятельно выполняет TLS/readiness checks.
 
 Публичный endpoint push API:
 
@@ -558,6 +559,39 @@ curl -i http://127.0.0.1:4000/relay/probe \
 ```bash
 ./deploy.sh
 ```
+
+### Обновление bootstrap, relay и TURN
+
+Для уже развёрнутого базового стека используйте `update-server.sh`: он берёт
+код только из public source mirror, получает versioned relay/signal images до rollout,
+пересоздаёт stack и проверяет health relay и HAProxy:
+
+```bash
+./update-server.sh
+```
+
+`deploy.sh` по умолчанию устанавливает локальный systemd timer. Каждые шесть
+часов (с рандомной задержкой) он ищет fast-forward tagged release `source-v*`
+в `https://github.com/simplegear-org/peerlink_servers.git` и запускает
+`update-server.sh` с exact tag. Untagged, non-fast-forward и major updates
+по умолчанию отклоняются. Владелец управляет настройкой через
+`/etc/peerlink-server-updater/config.env`:
+
+```bash
+PEERLINK_AUTO_UPDATE_ENABLED=true   # default
+PEERLINK_AUTO_UPDATE_REQUIRE_SIGNED_TAG=false
+PEERLINK_AUTO_UPDATE_ALLOW_MAJOR=false
+```
+
+Переключить только auto-update можно командами:
+
+```bash
+./install-auto-update.sh --enable
+./install-auto-update.sh --disable
+```
+
+Timer работает локально на сервере, а не как central control plane. Автоматически
+может быть установлен только release с tag в public mirror.
 
 По умолчанию:
 - `PUBLIC_IP` определяется автоматически; если определить не удалось, используется `127.0.0.1`
