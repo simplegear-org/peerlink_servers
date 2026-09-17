@@ -31,6 +31,10 @@ validation and retention lifecycle are isolated in their corresponding
 `relay-*.js` modules. This is an internal boundary only: relay HTTP endpoints,
 payloads and durable storage format remain compatible.
 
+The relay Docker target copies every `relay-*.js` runtime module explicitly.
+After changing that module set, publish a new immutable release image; an
+already published version tag cannot be repaired in place.
+
 ## Durable storage and retention
 
 `relay-storage.js` persists relay messages, blobs, incomplete chunk uploads,
