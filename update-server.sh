@@ -7,6 +7,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="${PEERLINK_SERVER_ROOT_DIR:-$SCRIPT_DIR}"
+# shellcheck source=deploy/update-common.sh
+source "$ROOT_DIR/deploy/update-common.sh"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 BRANCH="${PEERLINK_SERVER_BRANCH:-main}"
 REMOTE="${PEERLINK_SERVER_REMOTE:-origin}"
@@ -33,14 +35,6 @@ log() {
 fail() {
   echo "ERROR: $*" >&2
   exit 1
-}
-
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
-}
-
-require_file() {
-  [[ -f "$1" ]] || fail "Missing required file: $1"
 }
 
 compose() {

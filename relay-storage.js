@@ -48,7 +48,7 @@ class PersistentRelayMap extends Map {
       if (!Array.isArray(entries)) throw new Error('expected entry array');
       for (const entry of entries) {
         if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string') continue;
-        const value = this.decodeValue(entry[1]);
+        const value = this.decodeValue(entry[1], entry[0]);
         if (value !== null) super.set(entry[0], value);
       }
     } catch (error) {
@@ -129,7 +129,29 @@ export class RelayGroupMembershipStore extends PersistentRelayMap {
 
 export class RelayAckTombstoneStore extends PersistentRelayMap {
   constructor(dataDir) {
-    super(path.join(dataDir, 'ack-tombstones.json'));
+    super(path.join(dataDir, 'ack-tombstones.json'), {
+      encodeValue: (value) => value,
+      decodeValue: (value, key) => {
+        if (Number.isFinite(value)) {
+          const separatorIndex = key.indexOf('|');
+          return {
+            recipient: separatorIndex < 0 ? '' : key.slice(0, separatorIndex),
+            messageId: separatorIndex < 0 ? key : key.slice(separatorIndex + 1),
+            ackedAtMs: value,
+            expiresAtMs: null,
+          };
+        }
+        if (!value || typeof value !== 'object' || !Number.isFinite(value.ackedAtMs)) {
+          return null;
+        }
+        return {
+          recipient: typeof value.recipient === 'string' ? value.recipient : '',
+          messageId: typeof value.messageId === 'string' ? value.messageId : '',
+          ackedAtMs: value.ackedAtMs,
+          expiresAtMs: Number.isFinite(value.expiresAtMs) ? value.expiresAtMs : null,
+        };
+      },
+    });
   }
 }
 

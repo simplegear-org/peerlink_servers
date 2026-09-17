@@ -23,6 +23,14 @@ Presence (online/last-seen) is implemented by the signaling service (`signal.js`
 
 - `relay.js`
 
+## Runtime structure
+
+`relay.js` is the composition entrypoint. HTTP data routes live in
+`relay-data-routes.js`; metadata/probe routes, request validation, signature
+validation and retention lifecycle are isolated in their corresponding
+`relay-*.js` modules. This is an internal boundary only: relay HTTP endpoints,
+payloads and durable storage format remain compatible.
+
 ## Durable storage and retention
 
 `relay-storage.js` persists relay messages, blobs, incomplete chunk uploads,
@@ -38,6 +46,10 @@ signed owner update restores it. Tune `RELAY_ACK_TOMBSTONE_TTL_SECONDS`,
 `RELAY_GROUP_MEMBERSHIP_TTL_SECONDS` and
 `RELAY_GROUP_MEMBERSHIP_EXPIRED_TOMBSTONE_TTL_SECONDS` only when the matching
 retention policy is understood.
+
+Each ACK tombstone records recipient, message id, acknowledgement time and
+expiry time. It blocks a duplicate message store until expiry, survives relay
+restart and is then removed by persistent GC.
 
 ## Relay HTTP API
 
@@ -325,7 +337,9 @@ Response:
 
 ### `POST /relay/ack`
 
-Acknowledges successful delivery and removes message from queue.
+Acknowledges successful delivery and removes only the matching message from
+the recipient queue. ACK never removes blobs: encrypted media remains
+available until its own blob TTL expires.
 
 Required body fields:
 

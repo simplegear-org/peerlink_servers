@@ -41,6 +41,10 @@
 
 Файл: `relay.js`
 
+`relay.js` — composition entrypoint. Data routes, metadata/probe routes,
+request/signature validation и retention lifecycle разделены по `relay-*.js`
+модулям; HTTP protocol и storage format relay не менялись.
+
 Сервис хранит подписанные сообщения и blob-данные. Поддерживает:
 - `store/fetch/ack` для очереди сообщений,
 - `group/store` для fan-out в групповых чатах,
@@ -51,6 +55,10 @@
 `relay-data` в `/app/data/relay`. Messages, blobs, незавершённые uploads,
 group membership и ACK tombstones переживают process/container/host restart.
 Snapshots публикуются атомарно; retention выполняется при старте и периодически.
+
+ACK удаляет только message envelope и никогда не удаляет blob. Tombstone
+сохраняет recipient, message id, время ACK и expiry, поэтому duplicate store
+блокируется только в пределах bounded retention window.
 
 Сервис не выполняет регистрацию peer и не обслуживает signaling.
 

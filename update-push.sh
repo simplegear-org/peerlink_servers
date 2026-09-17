@@ -28,8 +28,9 @@ set -Eeuo pipefail
 ###############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 ROOT_DIR="${PEERLINK_PUSH_ROOT_DIR:-$SCRIPT_DIR}"
+# shellcheck source=deploy/update-common.sh
+source "$ROOT_DIR/deploy/update-common.sh"
 
 COMPOSE_FILE="$ROOT_DIR/docker-compose.push.yml"
 ENV_FILE="${PEERLINK_PUSH_ENV_FILE:-$ROOT_DIR/.env.push.local}"
@@ -96,24 +97,6 @@ fail() {
   echo
   echo "ERROR: $*" >&2
   exit 1
-}
-
-require_command() {
-  local name="$1"
-
-  command -v "$name" >/dev/null 2>&1 \
-    || fail "Missing required command: $name"
-}
-
-require_file() {
-  local path="$1"
-
-  [[ -f "$path" ]] \
-    || fail "Missing required file: $path"
-}
-
-ensure_dir() {
-  mkdir -p "$1"
 }
 
 compose() {

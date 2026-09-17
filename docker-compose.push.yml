@@ -1,6 +1,6 @@
 services:
   invite:
-    image: ${INVITE_IMAGE:-tangash/invite:1.7.3-2026091602}
+    image: ${INVITE_IMAGE:-tangash/invite:1.7.4-2026091701}
     container_name: peerlink-invite
     restart: always
     expose:
@@ -11,7 +11,7 @@ services:
       - invite-data:/data
 
   push:
-    image: ${PUSH_IMAGE:-tangash/push:1.7.3-2026091602}
+    image: ${PUSH_IMAGE:-tangash/push:1.7.4-2026091701}
     container_name: push
     restart: always
     expose:
@@ -47,7 +47,7 @@ services:
       - ./deploy/push/moderation-ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
   server-checker:
-    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.7.3-2026091602}
+    image: ${SERVER_CHECKER_IMAGE:-tangash/server-checker:1.7.4-2026091701}
     container_name: peerlink-server-checker
     restart: always
     depends_on:

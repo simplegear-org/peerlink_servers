@@ -43,6 +43,11 @@ used by coturn as `external-ip`.
 
 File: `relay.js`
 
+`relay.js` is the composition entrypoint. Data routes, metadata/probe routes,
+request/signature validation and retention lifecycle are separated into
+`relay-*.js` modules; this does not change the relay HTTP protocol or storage
+format.
+
 This service stores signed relay envelopes and allows clients to:
 - store/fetch/ack message envelopes,
 - fan-out one signed group envelope to recipient list (`/relay/group/store`),
@@ -52,6 +57,10 @@ Relay state is durable by default: Compose mounts the named `relay-data` volume
 at `/app/data/relay`. Messages, blobs, incomplete uploads, group membership and
 ACK tombstones survive process/container/host restarts. Snapshots are published
 atomically; retention is enforced at startup and periodically afterwards.
+
+An ACK removes only its message envelope, never a blob. Tombstones record the
+recipient, message id, acknowledgement time and expiry, so duplicate store is
+blocked only for their bounded retention window.
 
 It does not handle peer registration or signaling.
 
