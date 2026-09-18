@@ -157,20 +157,91 @@ export class RelayAckTombstoneStore extends PersistentRelayMap {
 
 export class RelayBlobUploadStore extends PersistentRelayMap {
   constructor(dataDir) {
+    const chunksDirectory = path.join(dataDir, 'blob-upload-chunks');
+    const legacyUploadKeys = new Set();
+    const chunkPath = (key, index) => path.join(
+      chunksDirectory,
+      crypto.createHash('sha256').update(key).digest('hex'),
+      `${index}.chunk`,
+    );
     super(path.join(dataDir, 'blob-uploads.json'), {
       encodeValue: (value) => ({
         ...value,
-        chunks: [...value.chunks.entries()].map(([index, bytes]) => [index, bytes.toString('base64')]),
+        // Chunk contents live in individual files.  Keeping only their indexes
+        // in the snapshot prevents each incoming chunk from rewriting every
+        // previously received megabyte synchronously.
+        chunks: [...value.chunks.keys()],
       }),
-      decodeValue: (value) => {
+      decodeValue: (value, key) => {
         if (!value || typeof value !== 'object' || !Array.isArray(value.chunks)) return null;
         const chunks = new Map();
         for (const entry of value.chunks) {
-          if (!Array.isArray(entry) || !Number.isInteger(entry[0]) || typeof entry[1] !== 'string') continue;
-          chunks.set(entry[0], Buffer.from(entry[1], 'base64'));
+          // Accept pre-1.7.7 snapshots, whose chunks were embedded as base64.
+          if (Array.isArray(entry) && Number.isInteger(entry[0]) && typeof entry[1] === 'string') {
+            const bytes = Buffer.from(entry[1], 'base64');
+            legacyUploadKeys.add(key);
+            chunks.set(entry[0], bytes);
+            continue;
+          }
+          if (!Number.isInteger(entry)) continue;
+          try {
+            chunks.set(entry, fs.readFileSync(chunkPath(key, entry)));
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+          }
         }
         return { ...value, chunks };
       },
     });
+    this.chunksDirectory = chunksDirectory;
+    for (const key of legacyUploadKeys) {
+      const upload = this.get(key);
+      if (!upload) continue;
+      for (const [index, bytes] of upload.chunks) this.#writeChunk(key, index, bytes);
+      this.set(key, upload);
+    }
+  }
+
+  storeChunk(key, index, bytes) {
+    this.#writeChunk(key, index, bytes);
+  }
+
+  delete(key) {
+    const deleted = super.delete(key);
+    if (deleted) fs.rmSync(this.#uploadDirectory(key), { recursive: true, force: true });
+    return deleted;
+  }
+
+  #uploadDirectory(key) {
+    return path.join(this.chunksDirectory, crypto.createHash('sha256').update(key).digest('hex'));
+  }
+
+  #chunkPath(key, index) {
+    return path.join(this.#uploadDirectory(key), `${index}.chunk`);
+  }
+
+  #writeChunk(key, index, bytes) {
+    const directory = this.#uploadDirectory(key);
+    fs.mkdirSync(directory, { recursive: true });
+    const target = this.#chunkPath(key, index);
+    const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    let descriptor;
+    try {
+      descriptor = fs.openSync(temporary, 'wx', 0o600);
+      fs.writeFileSync(descriptor, bytes);
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = null;
+      fs.renameSync(temporary, target);
+      fsyncDirectory(directory);
+    } catch (error) {
+      if (descriptor != null) fs.closeSync(descriptor);
+      try {
+        fs.unlinkSync(temporary);
+      } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') throw cleanupError;
+      }
+      throw error;
+    }
   }
 }

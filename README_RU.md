@@ -54,7 +54,11 @@ request/signature validation и retention lifecycle разделены по `rel
 Состояние relay по умолчанию durable: Compose монтирует named volume
 `relay-data` в `/app/data/relay`. Messages, blobs, незавершённые uploads,
 group membership и ACK tombstones переживают process/container/host restart.
-Snapshots публикуются атомарно; retention выполняется при старте и периодически.
+Snapshot messages, blobs и upload metadata публикуются атомарно; каждый chunk
+незавершённого upload сохраняется отдельным crash-safe файлом, поэтому новый
+chunk не переписывает уже принятый media payload. Legacy snapshot с
+embedded-чанками мигрируются при старте relay. Retention выполняется при старте
+и периодически.
 
 ACK удаляет только message envelope и никогда не удаляет blob. Tombstone
 сохраняет recipient, message id, время ACK и expiry, поэтому duplicate store

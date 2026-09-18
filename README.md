@@ -55,8 +55,12 @@ This service stores signed relay envelopes and allows clients to:
 
 Relay state is durable by default: Compose mounts the named `relay-data` volume
 at `/app/data/relay`. Messages, blobs, incomplete uploads, group membership and
-ACK tombstones survive process/container/host restarts. Snapshots are published
-atomically; retention is enforced at startup and periodically afterwards.
+ACK tombstones survive process/container/host restarts. Messages, blobs and
+upload metadata snapshots are published atomically; each incomplete upload
+chunk is instead persisted in its own crash-safe file, so receiving a later
+chunk never rewrites the already received media payload. Legacy embedded-chunk
+snapshots are migrated at relay startup. Retention is enforced at startup and
+periodically afterwards.
 
 An ACK removes only its message envelope, never a blob. Tombstones record the
 recipient, message id, acknowledgement time and expiry, so duplicate store is

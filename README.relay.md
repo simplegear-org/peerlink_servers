@@ -28,8 +28,9 @@ Presence (online/last-seen) is implemented by the signaling service (`signal.js`
 `relay.js` is the composition entrypoint. HTTP data routes live in
 `relay-data-routes.js`; metadata/probe routes, request validation, signature
 validation and retention lifecycle are isolated in their corresponding
-`relay-*.js` modules. This is an internal boundary only: relay HTTP endpoints,
-payloads and durable storage format remain compatible.
+`relay-*.js` modules. This is an internal boundary only: relay HTTP endpoints
+and payloads remain compatible. Internal incomplete-upload snapshots from older
+releases are migrated on startup as described below.
 
 The relay Docker target copies every `relay-*.js` runtime module explicitly.
 After changing that module set, publish a new immutable release image; an
@@ -42,8 +43,12 @@ group membership and ACK tombstones in `RELAY_DATA_DIR` (default
 `data/relay`). Docker Compose uses the `relay-data` named volume, so ordinary
 container recreation does not erase relay replicas.
 
-Snapshots are written through a same-directory temporary file, `fsync` and
-atomic rename. Interrupted temporary snapshots are discarded on startup.
+Messages, blobs and upload metadata snapshots are written through a
+same-directory temporary file, `fsync` and atomic rename. Each incomplete
+upload chunk is stored in its own crash-safe file; the metadata snapshot keeps
+only chunk indexes, preventing later chunks from repeatedly rewriting the full
+media payload. Interrupted temporary files are discarded on startup. Relay
+also migrates legacy snapshots that embed chunk bytes without data loss.
 Expired messages, blobs and incomplete uploads are pruned by their TTL;
 membership defaults to 30 days and leaves a bounded expiry tombstone until a
 signed owner update restores it. Tune `RELAY_ACK_TOMBSTONE_TTL_SECONDS`,

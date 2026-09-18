@@ -1,6 +1,6 @@
 services:
   relay:
-    image: ${RELAY_IMAGE:-tangash/relay:1.7.6-2026091801}
+    image: ${RELAY_IMAGE:-tangash/relay:1.7.7-2026091802}
     container_name: relay
     restart: always
     ports:
@@ -11,7 +11,7 @@ services:
       - relay-data:/app/data/relay
 
   signal:
-    image: ${SIGNAL_IMAGE:-tangash/signal:1.7.6-2026091801}
+    image: ${SIGNAL_IMAGE:-tangash/signal:1.7.7-2026091802}
     container_name: signal
     restart: always
     ports:

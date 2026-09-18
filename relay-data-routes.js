@@ -404,6 +404,7 @@ export function registerRelayDataRoutes(app, dependencies) {
     };
   
     upload.chunks.set(chunkIndex, chunkBytes);
+    blobUploads.storeChunk(key, chunkIndex, chunkBytes);
     blobUploads.set(key, upload);
   
     return res.json({ ok: true, id, chunkIndex, totalChunks, received: upload.chunks.size });
