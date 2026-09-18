@@ -574,6 +574,24 @@ function normalizeDelivery(value) {
   };
 }
 
+function notificationMuteForPayload(payload, senderUserId) {
+  if (!payload || typeof payload !== 'object') return null;
+  const groupId = normalizeStringValue(payload.groupId, 128);
+  switch (payload.type) {
+    case 'direct_update':
+      return { channel: 'mutedMessagePeerIds', targetId: senderUserId };
+    case 'group_update':
+      return groupId ? { channel: 'mutedMessageGroupIds', targetId: groupId } : null;
+    case 'call_invite':
+      if (payload.callAction === 'end' || payload.mediaType === 'end') return null;
+      return groupId
+        ? { channel: 'mutedCallGroupIds', targetId: groupId }
+        : { channel: 'mutedCallPeerIds', targetId: senderUserId };
+    default:
+      return null;
+  }
+}
+
 function normalizePeerIdList(value) {
   return Array.isArray(value)
     ? [...new Set(value.map((item) => normalizePeerId(item)).filter(Boolean))].sort()
@@ -586,12 +604,19 @@ function normalizeAccessPolicySnapshot(body) {
   const policyVersion = Number.parseInt(String(body.policyVersion ?? '0'), 10);
   const updatedAt = normalizeTimestamp(body.updatedAt) || new Date().toISOString();
   const snapshotHash = normalizeStringValue(body.snapshotHash, 256) || '';
+  const policySchemaVersion = Number.parseInt(String(body.policySchemaVersion ?? '1'), 10);
   if (!userId || !Number.isFinite(policyVersion) || policyVersion < 0) return null;
+  if (!Number.isFinite(policySchemaVersion) || policySchemaVersion < 1 || policySchemaVersion > 2) return null;
   return {
     userId,
     allowMessagesOnlyFromContacts: body.allowMessagesOnlyFromContacts === true,
     contactPeerIds: normalizePeerIdList(body.contactPeerIds),
     blockedPeerIds: normalizePeerIdList(body.blockedPeerIds),
+    policySchemaVersion,
+    mutedMessagePeerIds: policySchemaVersion >= 2 ? normalizePeerIdList(body.mutedMessagePeerIds) : [],
+    mutedMessageGroupIds: policySchemaVersion >= 2 ? normalizePeerIdList(body.mutedMessageGroupIds) : [],
+    mutedCallPeerIds: policySchemaVersion >= 2 ? normalizePeerIdList(body.mutedCallPeerIds) : [],
+    mutedCallGroupIds: policySchemaVersion >= 2 ? normalizePeerIdList(body.mutedCallGroupIds) : [],
     policyVersion,
     updatedAt,
     snapshotHash,
@@ -606,12 +631,13 @@ function buildAccessPolicySignaturePayload(body, normalized) {
   if (normalized.from !== snapshot.userId) {
     throw new Error('from must match userId');
   }
-  return Buffer.from(
-    `${normalized.id}|${normalized.from}|${snapshot.userId}|${snapshot.allowMessagesOnlyFromContacts}|`
+  const legacyPayload = `${normalized.id}|${normalized.from}|${snapshot.userId}|${snapshot.allowMessagesOnlyFromContacts}|`
       + `${JSON.stringify(snapshot.contactPeerIds)}|${JSON.stringify(snapshot.blockedPeerIds)}|`
-      + `${snapshot.policyVersion}|${snapshot.updatedAt}|${snapshot.snapshotHash}|${normalized.ts}`,
-    'utf8',
-  );
+      + `${snapshot.policyVersion}|${snapshot.updatedAt}|${snapshot.snapshotHash}`;
+  const payload = snapshot.policySchemaVersion >= 2
+    ? `${legacyPayload}|2|${JSON.stringify(snapshot.mutedMessagePeerIds)}|${JSON.stringify(snapshot.mutedMessageGroupIds)}|${JSON.stringify(snapshot.mutedCallPeerIds)}|${JSON.stringify(snapshot.mutedCallGroupIds)}|${normalized.ts}`
+    : `${legacyPayload}|${normalized.ts}`;
+  return Buffer.from(payload, 'utf8');
 }
 
 function buildPushEventSignaturePayload(body, normalized) {
@@ -835,10 +861,12 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   }
   const isAccessFilteredEvent =
     payload.type === 'direct_update' || payload.type === 'group_update' || payload.type === 'call_invite';
+  const notificationMute = notificationMuteForPayload(payload, senderUserId);
   const accessAllowedRecipients = isAccessFilteredEvent
     ? await observability.filterByAccessPolicy({
         senderUserId,
         recipientUserIds: moderationAllowedRecipients.allowed,
+        notificationMute,
         missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
       })
     : { allowed: moderationAllowedRecipients.allowed, dropped: [], decisions: [] };
@@ -849,6 +877,19 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
     });
   }
   if (accessAllowedRecipients.allowed.length === 0) {
+    const mutedOnly = accessAllowedRecipients.dropped.length > 0 &&
+      accessAllowedRecipients.dropped.every((item) => item.reason.startsWith('muted_'));
+    if (mutedOnly) {
+      return res.json({
+        ok: true,
+        suppressed: true,
+        recipients: 0,
+        bannedRecipients: moderationAllowedRecipients.banned,
+        droppedRecipients: accessAllowedRecipients.dropped,
+        sent: 0,
+        failed: 0,
+      });
+    }
     return res.status(403).json({
       ok: false,
       error: 'all_recipients_filtered',
@@ -917,6 +958,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         ? await observability.decideAccessPolicy({
             recipientUserId: target.userId,
             senderUserId,
+            notificationMute,
             missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
           })
         : { allowed: true, reason: 'not_applicable' };

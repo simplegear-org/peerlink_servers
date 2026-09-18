@@ -176,21 +176,26 @@ nginx до активации и самостоятельно выполняет
 - `/devices/register` проверяет `peerId == SHA-256("uid:v2:" + signingPub + ":" + identityNonce)` и сохраняет binding `peerId -> signingPub`
 - режим миграции soft: legacy-клиенты без binding продолжают работать, но если binding уже есть, mismatch ключа отклоняется для `/events/push`, `/moderation/reports` и `/moderation/appeals`
 - `POST /devices/access-policy` принимает signed snapshot получателя:
-  `userId/peerId`, `allowMessagesOnlyFromContacts`, `contactPeerIds`, `blockedPeerIds`, `policyVersion`, `updatedAt`, `snapshotHash`
-- payload подписи `/devices/access-policy`:
-  `id|from|userId|allowMessagesOnlyFromContacts|contactPeerIdsJson|blockedPeerIdsJson|policyVersion|updatedAt|snapshotHash|ts`
+  `userId/peerId`, `allowMessagesOnlyFromContacts`, `contactPeerIds`, `blockedPeerIds`, `policyVersion`, `updatedAt`, `snapshotHash`; schema-v2 дополнительно передаёт `policySchemaVersion: 2` и четыре независимых списка mute: `mutedMessagePeerIds`, `mutedMessageGroupIds`, `mutedCallPeerIds`, `mutedCallGroupIds`.
+- payload подписи `/devices/access-policy`: schema-v1 сохраняет
+  `id|from|userId|allowMessagesOnlyFromContacts|contactPeerIdsJson|blockedPeerIdsJson|policyVersion|updatedAt|snapshotHash|ts`; schema-v2 добавляет перед `ts`:
+  `|2|mutedMessagePeerIdsJson|mutedMessageGroupIdsJson|mutedCallPeerIdsJson|mutedCallGroupIdsJson`.
+  Отсутствующие schema-v2 поля трактуются как пустые списки.
 - для `/events/push` поле `from` должно совпадать с `senderUserId`
 - anti-replay по `id` через TTL-кэш на стороне сервиса
 - `POST /events/push` принимает `senderUserId`, `recipientUserIds`, app-defined `payload`, опциональные `notification` и `delivery`.
 - standard delivery идет на message-токены через FCM/APNs alert или silent push; VoIP delivery идет на APNs VoIP (`apns-push-type: voip`).
 - FCM `data` нормализуется к строковым значениям; вложенные объекты вроде `servers` сериализуются в JSON.
 - Для `call_invite` на iOS/macOS standard FCM/APNs delivery пропускается только если включен `delivery.voip`, настроен APNs VoIP topic и у конкретного устройства есть активный `voipToken`; CallKit должен запускаться через VoIP path. Если у устройства нет активного VoIP-токена, standard delivery остается fallback. Android продолжает получать `call_invite` через standard FCM data-only.
-- Для `direct_update`/`group_update` и `call_invite` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`.
+- Для `direct_update`/`group_update` и входящего `call_invite` сервер перед fanout проверяет snapshot получателя: sender из `blockedPeerIds` отбрасывается, `allowMessagesOnlyFromContacts=true` пропускает только sender из `contactPeerIds`, а schema-v2 mute lists подавляют только соответствующий канал уведомлений. `mutedMessage*` не подавляет звонки, `mutedCall*` не подавляет message push; relay delivery сообщений не меняется. Полностью muted fanout возвращает успешный статус `suppressed`, а не block-ошибку.
 - При отсутствии access-policy snapshot режим задает `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. По умолчанию `allow`, чтобы старые клиенты оставались совместимыми и получали push без новой серверной фильтрации. После rollout клиентов можно включить `drop`.
 - Диагностика access-policy пишется в stdout:
   - `[push][access-policy]` после sync snapshot: `userId`, `policyVersion`, `contactsCount`, `blockedCount`, `snapshotHash`, результат.
   - `[push][access-policy][decisions]` при fanout: per-recipient `allowed`, `reason`, `policyVersion`, `contactsCount`, `blockedCount`.
   - `[push] standard send skipped ... reason=policy_blocked`, когда push реально отброшен blocklist.
+  - policy decision metrics/logs различают `muted_message_peer`,
+    `muted_message_group`, `muted_call_peer`, `muted_call_group` без записи
+    содержимого сообщений.
 - После allow iOS `direct_update`/`group_update` отправляется как visible alert push с APNs priority `10` и `mutable-content: 1`; Android message/update остается data-only с высоким priority.
 - Если `notification.title/body` не переданы, standard delivery остается silent/data-only. Android `call_invite` использует этот путь, чтобы клиент сам решил foreground/fullscreen отображение.
 
@@ -433,6 +438,7 @@ access-policy snapshots.
 - `push_user_policy`
 - `push_user_contacts`
 - `push_user_blocked`
+- `push_user_notification_mutes`
 
 Метрики access-policy:
 - `peerlink_push_access_policy_decisions_total`

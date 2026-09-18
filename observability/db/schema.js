@@ -200,6 +200,17 @@ create table if not exists push_user_blocked (
   primary key (user_id, blocked_peer_id)
 );
 
+create table if not exists push_user_notification_mutes (
+  user_id text not null references push_user_policy(user_id) on delete cascade,
+  mute_channel text not null check (mute_channel in (
+    'mutedMessagePeerIds', 'mutedMessageGroupIds',
+    'mutedCallPeerIds', 'mutedCallGroupIds'
+  )),
+  target_id text not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, mute_channel, target_id)
+);
+
 create index if not exists observed_servers_first_seen_idx on observed_servers(first_seen_at);
 create index if not exists observed_servers_status_idx on observed_servers(status);
 create index if not exists observed_servers_last_seen_idx on observed_servers(last_seen_at desc);

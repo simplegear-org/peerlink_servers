@@ -57,6 +57,7 @@ export class PushObservability {
     this.pushUserPolicies = new Map();
     this.pushUserContacts = new Map();
     this.pushUserBlocked = new Map();
+    this.pushUserNotificationMutes = new Map();
   }
 
   async init() {
@@ -219,12 +220,22 @@ export class PushObservability {
     allowMessagesOnlyFromContacts,
     contactPeerIds,
     blockedPeerIds,
+    mutedMessagePeerIds = [],
+    mutedMessageGroupIds = [],
+    mutedCallPeerIds = [],
+    mutedCallGroupIds = [],
     policyVersion,
     updatedAt,
     snapshotHash,
   }) {
     const contacts = this.normalizePolicyIds(contactPeerIds);
     const blocked = this.normalizePolicyIds(blockedPeerIds);
+    const mutesByChannel = {
+      mutedMessagePeerIds: this.normalizePolicyIds(mutedMessagePeerIds),
+      mutedMessageGroupIds: this.normalizePolicyIds(mutedMessageGroupIds),
+      mutedCallPeerIds: this.normalizePolicyIds(mutedCallPeerIds),
+      mutedCallGroupIds: this.normalizePolicyIds(mutedCallGroupIds),
+    };
     const version = Number.isFinite(Number(policyVersion)) ? Number(policyVersion) : 0;
     const clientUpdatedAt = updatedAt ? new Date(updatedAt) : new Date();
     if (Number.isNaN(clientUpdatedAt.getTime())) {
@@ -275,6 +286,17 @@ export class PushObservability {
             [userId, blockedPeerId, clientUpdatedAt.toISOString()],
           );
         }
+        await client.query('delete from push_user_notification_mutes where user_id = $1', [userId]);
+        for (const [muteChannel, targetIds] of Object.entries(mutesByChannel)) {
+          for (const targetId of targetIds) {
+            await client.query(
+              `insert into push_user_notification_mutes
+                (user_id, mute_channel, target_id, updated_at)
+               values ($1, $2, $3, $4)`,
+              [userId, muteChannel, targetId, clientUpdatedAt.toISOString()],
+            );
+          }
+        }
         await client.query('commit');
       } catch (error) {
         await client.query('rollback');
@@ -300,6 +322,15 @@ export class PushObservability {
     });
     this.pushUserContacts.set(userId, new Set(contacts));
     this.pushUserBlocked.set(userId, new Set(blocked));
+    this.pushUserNotificationMutes.set(
+      userId,
+      Object.fromEntries(
+        Object.entries(mutesByChannel).map(([channel, targetIds]) => [
+          channel,
+          new Set(targetIds),
+        ]),
+      ),
+    );
     this.policySync.inc({ result: 'ok' });
     return { ok: true, stale: false, policyVersion: version, snapshotHash: snapshotHash || '' };
   }
@@ -319,11 +350,25 @@ export class PushObservability {
         `select blocked_peer_id from push_user_blocked where user_id = $1`,
         [userId],
       );
+      const mutes = await this.pool.query(
+        `select mute_channel, target_id from push_user_notification_mutes where user_id = $1`,
+        [userId],
+      );
+      const mutesByChannel = {
+        mutedMessagePeerIds: new Set(),
+        mutedMessageGroupIds: new Set(),
+        mutedCallPeerIds: new Set(),
+        mutedCallGroupIds: new Set(),
+      };
+      for (const row of mutes.rows) {
+        mutesByChannel[row.mute_channel]?.add(row.target_id);
+      }
       return {
         userId,
         allowMessagesOnlyFromContacts: Boolean(policy.rows[0].allow_messages_only_from_contacts),
         contactPeerIds: new Set(contacts.rows.map((row) => row.contact_peer_id)),
         blockedPeerIds: new Set(blocked.rows.map((row) => row.blocked_peer_id)),
+        ...mutesByChannel,
         policyVersion: Number(policy.rows[0].policy_version || 0),
         snapshotHash: policy.rows[0].snapshot_hash || '',
         updatedAt: policy.rows[0].updated_at,
@@ -336,10 +381,21 @@ export class PushObservability {
       ...policy,
       contactPeerIds: this.pushUserContacts.get(userId) || new Set(),
       blockedPeerIds: this.pushUserBlocked.get(userId) || new Set(),
+      ...(this.pushUserNotificationMutes.get(userId) || {
+        mutedMessagePeerIds: new Set(),
+        mutedMessageGroupIds: new Set(),
+        mutedCallPeerIds: new Set(),
+        mutedCallGroupIds: new Set(),
+      }),
     };
   }
 
-  async decideAccessPolicy({ recipientUserId, senderUserId, missingSnapshotMode = 'allow' }) {
+  async decideAccessPolicy({
+    recipientUserId,
+    senderUserId,
+    notificationMute = null,
+    missingSnapshotMode = 'allow',
+  }) {
     const policy = await this.accessPolicyForUser(recipientUserId);
     if (!policy) {
       const allowed = missingSnapshotMode !== 'drop';
@@ -353,6 +409,18 @@ export class PushObservability {
       return {
         allowed: false,
         reason: 'blocked',
+        policyVersion: Number(policy.policyVersion || 0),
+        snapshotHash: policy.snapshotHash || '',
+        contactsCount: policy.contactPeerIds.size,
+        blockedCount: policy.blockedPeerIds.size,
+      };
+    }
+    const muteDecision = this.notificationMuteDecision(policy, notificationMute);
+    if (muteDecision) {
+      this.policyDecisions.inc({ decision: muteDecision.reason });
+      return {
+        allowed: false,
+        reason: muteDecision.reason,
         policyVersion: Number(policy.policyVersion || 0),
         snapshotHash: policy.snapshotHash || '',
         contactsCount: policy.contactPeerIds.size,
@@ -392,7 +460,31 @@ export class PushObservability {
     };
   }
 
-  async filterByAccessPolicy({ senderUserId, recipientUserIds, missingSnapshotMode = 'allow' }) {
+  notificationMuteDecision(policy, notificationMute) {
+    if (!notificationMute || typeof notificationMute !== 'object') return null;
+    const targetId = typeof notificationMute.targetId === 'string'
+      ? notificationMute.targetId.trim()
+      : '';
+    if (!targetId) return null;
+    const channel = notificationMute.channel;
+    if (!['mutedMessagePeerIds', 'mutedMessageGroupIds', 'mutedCallPeerIds', 'mutedCallGroupIds'].includes(channel)) {
+      return null;
+    }
+    if (!policy[channel]?.has(targetId)) return null;
+    return {
+      reason: channel === 'mutedMessagePeerIds' ? 'muted_message_peer'
+        : channel === 'mutedMessageGroupIds' ? 'muted_message_group'
+          : channel === 'mutedCallPeerIds' ? 'muted_call_peer'
+            : 'muted_call_group',
+    };
+  }
+
+  async filterByAccessPolicy({
+    senderUserId,
+    recipientUserIds,
+    notificationMute = null,
+    missingSnapshotMode = 'allow',
+  }) {
     const allowed = [];
     const dropped = [];
     const decisions = [];
@@ -400,6 +492,7 @@ export class PushObservability {
       const decision = await this.decideAccessPolicy({
         recipientUserId,
         senderUserId,
+        notificationMute,
         missingSnapshotMode,
       });
       decisions.push({

@@ -11,7 +11,8 @@ from `server_usage_hourly`, and checker history from `server_checks`.
 
 Prometheus is runtime telemetry for push infrastructure: accepted push events,
 sent/failed deliveries, APNS/FCM split, dedup/replay cache size, access-policy
-decisions/sync, Postgres health and delivery latency.
+decisions/sync (including distinct message/call and direct/group mute reasons),
+Postgres health and delivery latency.
 
 ## Dashboards
 

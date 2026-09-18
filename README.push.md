@@ -124,13 +124,21 @@ Request body:
 - `allowMessagesOnlyFromContacts` (boolean)
 - `contactPeerIds` (array)
 - `blockedPeerIds` (array)
+- `policySchemaVersion` (optional; `2` when mute fields are present)
+- `mutedMessagePeerIds`, `mutedMessageGroupIds`, `mutedCallPeerIds`,
+  `mutedCallGroupIds` (optional arrays; omitted by schema-v1 clients and
+  interpreted as empty lists)
 - `policyVersion` (integer, monotonic per user)
 - `updatedAt` (client timestamp)
 - `snapshotHash` (optional idempotency/diagnostic hash)
 
 Signature payload:
 
+Schema v1:
 `id|from|userId|allowMessagesOnlyFromContacts|contactPeerIdsJson|blockedPeerIdsJson|policyVersion|updatedAt|snapshotHash|ts`
+
+Schema v2 appends the explicitly versioned mute lists before `ts`:
+`...|snapshotHash|2|mutedMessagePeerIdsJson|mutedMessageGroupIdsJson|mutedCallPeerIdsJson|mutedCallGroupIdsJson|ts`
 
 Older clients that do not send this endpoint remain compatible while
 `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE=allow`.
@@ -170,9 +178,13 @@ Fanout behavior:
   VoIP path only. If the device has no active VoIP token, standard delivery
   remains as a fallback. Android still receives standard FCM data-only call
   invites.
-- For `direct_update`, `group_update`, and `call_invite`, the server checks the
-  recipient's stored access-policy snapshot before fanout: blocked senders are
-  dropped, and contacts-only recipients only allow known contacts.
+- For `direct_update`, `group_update`, and incoming `call_invite`, the server
+  checks the recipient's stored access-policy snapshot before fanout: blocked
+  senders are dropped, contacts-only recipients only allow known contacts, and
+  schema-v2 mute lists suppress only their matching notification channel.
+  `mutedMessage*` never suppresses calls; `mutedCall*` never suppresses message
+  pushes. A muted notification returns successful `suppressed` fanout status;
+  relay message delivery is unaffected.
 - Missing access-policy snapshots are controlled by
   `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE`. Default `allow` keeps older clients
   compatible and sends pushes without the new server-side filter. Future strict
@@ -185,6 +197,9 @@ Fanout behavior:
     `allowed`, `reason`, `policyVersion`, `contactsCount`, and `blockedCount`.
   - `[push] standard send skipped ... reason=policy_blocked` when a push is
     dropped by the blocklist.
+  - policy decision metrics/logs use distinct `muted_message_peer`,
+    `muted_message_group`, `muted_call_peer`, and `muted_call_group` reasons
+    without recording message content.
 - After allow, iOS `direct_update`/`group_update` uses visible alert delivery
   with APNs priority `10` and `mutable-content: 1`, so iOS can show the push even
   when the app is suspended. Android message/update delivery remains data-only
@@ -492,6 +507,7 @@ Push persistence/access-policy tables:
 - `push_user_policy`
 - `push_user_contacts`
 - `push_user_blocked`
+- `push_user_notification_mutes`
 
 Access-policy metrics:
 - `peerlink_push_access_policy_decisions_total`

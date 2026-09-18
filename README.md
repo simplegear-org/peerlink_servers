@@ -140,6 +140,9 @@ Push write contract:
   the recipient's access-policy snapshot. Missing snapshots default to compatibility mode
   (`PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE=allow`) so older clients still
   receive pushes without the new filter,
+  schema-v2 snapshots additionally carry independent direct/group message/call
+  mute lists; a mute suppresses only the matching push fanout and never relay
+  message delivery,
 - after allow, iOS `direct_update`/`group_update` uses alert delivery with APNs
   priority `10` and `mutable-content: 1`; Android message/update remains
   data-only with high priority,
