@@ -90,6 +90,15 @@ For clients that include identity binding fields, the signature payload is:
 Identity proof payload:
 `peerlink_identity_binding_v2|peerId|signingPub|identityNonce`
 
+### `POST /devices/self-check`
+
+Authenticated signed delivery-loopback endpoint. The client sends an opaque
+X25519-encrypted challenge (`ephemeralPublicKey`, `ciphertext`, `checkId`,
+`expiresAt`) and its current APNs/FCM token. The service does not decrypt or
+persist the challenge; it sends the same opaque payload as a data-only push to
+that token. A successful HTTP response means the provider accepted the send,
+not that the client received it.
+
 ### `POST /devices/unregister`
 
 Disables a user device token.
@@ -306,8 +315,8 @@ calls stay blocked until `unban`.
 - Set `PUSH_API_TOKEN` and call with `Authorization: Bearer <token>`.
 - Set `MODERATION_ADMIN_TOKEN` for moderator UI/admin endpoints. If omitted,
   admin moderation endpoints use `PUSH_API_TOKEN`.
-- Write endpoints `/devices/register`, `/devices/access-policy`,
-  `/devices/unregister`, and `/events/push` require Ed25519 signature (`id`,
+- Write endpoints `/devices/register`, `/devices/self-check`,
+  `/devices/access-policy`, `/devices/unregister`, and `/events/push` require Ed25519 signature (`id`,
   `from`, `ts`, `sig`, `signingPub`) and replay protection by request id TTL
   cache.
 - `push.js` wires route-level security checks through
@@ -579,7 +588,7 @@ In this mode `deploy-push.sh` skips the direct DNS-to-origin check because proxi
 ## Recommended integration
 
 Use `app/backend -> push` integration:
-- app/backend calls `/devices/register`, `/devices/access-policy`, and
+- app/backend calls `/devices/register`, `/devices/self-check`, `/devices/access-policy`, and
   `/devices/unregister`
 - app/backend emits `/events/push` for message, account, group, and call events
 - push service fanouts FCM/APNs pushes to registered recipient devices

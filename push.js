@@ -441,6 +441,21 @@ function buildUnregisterSignaturePayload(body, normalized) {
   });
 }
 
+function buildSelfCheckSignaturePayload(body, normalized) {
+  const userId = normalizeUserId(body.userId);
+  const deviceId = normalizeDeviceId(body.deviceId);
+  const token = normalizeStringValue(body.token, 4096);
+  const provider = normalizeStringValue(body.messageProvider, 16)?.toLowerCase();
+  const checkId = normalizeStringValue(body.checkId, 256);
+  const ephemeralPublicKey = normalizeStringValue(body.ephemeralPublicKey, 256);
+  const ciphertext = normalizeStringValue(body.ciphertext, 8192);
+  const expiresAt = Number.parseInt(String(body.expiresAt), 10);
+  if (!userId || !deviceId || !token || !provider || !checkId || !ephemeralPublicKey || !ciphertext || !Number.isFinite(expiresAt) || normalized.from !== userId) {
+    throw new Error('invalid self check fields');
+  }
+  return Buffer.from(`${normalized.id}|${normalized.from}|${deviceId}|${token}|${provider}|${checkId}|${ephemeralPublicKey}|${ciphertext}|${expiresAt}|${normalized.ts}`, 'utf8');
+}
+
 function buildUnregisterPayload(body, normalized, { normalizeToken, invalidMessage }) {
   const userId = normalizeUserId(body.userId);
   const deviceId = normalizeDeviceId(body.deviceId);
@@ -743,6 +758,7 @@ app.get('/.well-known/peerlink-source', (_req, res) => {
   res.json(sourceMetadata);
 });
 
+
 registerModerationRoutes({
   app,
   requireSignedRequest,
@@ -818,6 +834,7 @@ registerDeviceRoutes({
   buildRegisterSignaturePayload,
   buildUnregisterSignaturePayload,
   buildAccessPolicySignaturePayload,
+  buildSelfCheckSignaturePayload,
   verifyAndBindPeerIdentity,
   enforcePeerIdentityBinding,
   observability,
@@ -829,6 +846,14 @@ registerDeviceRoutes({
   normalizeVoipTokenInput,
   normalizePlatform,
   normalizeAccessPolicySnapshot,
+  sendSelfCheck: async ({ provider, token, checkId, ephemeralPublicKey, ciphertext, expiresAt }) => {
+    const payload = { type: 'push_self_check_v1', checkId, ephemeralPublicKey, ciphertext, expiresAt: String(expiresAt) };
+    if (provider === 'apns') {
+      await pushProviders.sendApnsBackground({ token, topic: APNS_MESSAGES_TOPIC, payload: { aps: { 'content-available': 1 }, ...payload } });
+      return;
+    }
+    await pushProviders.sendFcm({ token, data: payload });
+  },
 });
 
 app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignaturePayload), async (req, res) => {

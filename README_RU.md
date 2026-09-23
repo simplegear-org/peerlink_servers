@@ -128,6 +128,7 @@ HTTP-сервис, который хранит токены устройств �
 
 - `POST /send` — отправка push (`{ token, data, notification? }`)
 - `POST /devices/register` — регистрация/обновление устройства (`userId`, `deviceId`, `messageToken`, `messageProvider`, `voipToken?`, `platform`)
+- `POST /devices/self-check` — фоновая проверка APNs/FCM delivery: сервер возвращает на тот же token opaque X25519 ciphertext без расшифровки и без UI-уведомления
 - `POST /devices/access-policy` — запись snapshot контактов/blocklist для server-side push filtering
 - `POST /devices/unregister` — деактивация устройства
 - `GET /devices/by-user/:userId` — список устройств пользователя
@@ -178,6 +179,7 @@ nginx до активации и самостоятельно выполняет
   - v2-подпись register: `id|from|deviceId|messageToken|messageProvider|voipToken|platform|appVersion|identitySchemaVersion|identityNonce|identityProofSig|ts`
   - identity proof payload: `peerlink_identity_binding_v2|peerId|signingPub|identityNonce`
 - `/devices/register` проверяет `peerId == SHA-256("uid:v2:" + signingPub + ":" + identityNonce)` и сохраняет binding `peerId -> signingPub`
+- `/devices/self-check` требует signed request с `userId`, `deviceId`, token, provider, `checkId`, ephemeral X25519 public key, ciphertext и коротким `expiresAt`; сервер не сохраняет и не расшифровывает ciphertext, а отправляет data-only push на тот же token.
 - режим миграции soft: legacy-клиенты без binding продолжают работать, но если binding уже есть, mismatch ключа отклоняется для `/events/push`, `/moderation/reports` и `/moderation/appeals`
 - `POST /devices/access-policy` принимает signed snapshot получателя:
   `userId/peerId`, `allowMessagesOnlyFromContacts`, `contactPeerIds`, `blockedPeerIds`, `policyVersion`, `updatedAt`, `snapshotHash`; schema-v2 дополнительно передаёт `policySchemaVersion: 2` и четыре независимых списка mute: `mutedMessagePeerIds`, `mutedMessageGroupIds`, `mutedCallPeerIds`, `mutedCallGroupIds`.

@@ -120,6 +120,7 @@ File: `push.js`
 Internal push-delivery service for FCM/APNs:
 - `POST /send`
 - `POST /devices/register`
+- `POST /devices/self-check`
 - `POST /devices/access-policy`
 - `POST /devices/unregister`
 - `GET /devices/by-user/:userId`

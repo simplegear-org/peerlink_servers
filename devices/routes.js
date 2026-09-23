@@ -7,6 +7,7 @@ export function registerDeviceRoutes({
   buildRegisterSignaturePayload,
   buildUnregisterSignaturePayload,
   buildAccessPolicySignaturePayload,
+  buildSelfCheckSignaturePayload,
   verifyAndBindPeerIdentity,
   enforcePeerIdentityBinding,
   observability,
@@ -18,6 +19,7 @@ export function registerDeviceRoutes({
   normalizeVoipTokenInput,
   normalizePlatform,
   normalizeAccessPolicySnapshot,
+  sendSelfCheck,
 }) {
   app.post('/devices/register', requireAuth, requireSignedRequest(buildRegisterSignaturePayload), async (req, res) => {
     const userId = normalizeUserId(req.body?.userId);
@@ -79,6 +81,35 @@ export function registerDeviceRoutes({
       device: deviceRegistry.devicePublicView(device),
       identityBinding: binding.legacy ? 'legacy' : 'verified',
     });
+  });
+
+  app.post('/devices/self-check', requireAuth, requireSignedRequest(buildSelfCheckSignaturePayload), async (req, res) => {
+    const userId = normalizeUserId(req.body?.userId);
+    const deviceId = normalizeDeviceId(req.body?.deviceId);
+    const token = normalizeStringValue(req.body?.token, 4096);
+    const provider = normalizeStringValue(req.body?.messageProvider, 16)?.toLowerCase();
+    const checkId = normalizeStringValue(req.body?.checkId, 256);
+    const ephemeralPublicKey = normalizeStringValue(req.body?.ephemeralPublicKey, 256);
+    const ciphertext = normalizeStringValue(req.body?.ciphertext, 8192);
+    const expiresAt = Number.parseInt(String(req.body?.expiresAt), 10);
+    if (!userId || !deviceId || !token || !['fcm', 'apns'].includes(provider)
+      || !checkId || !ephemeralPublicKey || !ciphertext || !Number.isFinite(expiresAt)
+      || expiresAt <= Date.now() || expiresAt > Date.now() + 5 * 60 * 1000) {
+      return res.status(400).json({ error: 'invalid_payload' });
+    }
+    const binding = await enforcePeerIdentityBinding({
+      peerId: userId,
+      signingPubB64: req.body.signingPub,
+      source: 'devices_self_check',
+    });
+    if (!binding.ok) return res.status(401).json({ error: binding.error });
+    if (await observability.isPeerBanned(userId)) return res.status(403).json({ error: 'peer_banned' });
+    try {
+      await sendSelfCheck({ provider, token, checkId, ephemeralPublicKey, ciphertext, expiresAt });
+      return res.json({ ok: true, checkId, expiresAt });
+    } catch (_) {
+      return res.status(502).json({ error: 'self_check_delivery_failed' });
+    }
   });
 
   app.post('/devices/access-policy', requireAuth, requireSignedRequest(buildAccessPolicySignaturePayload), async (req, res) => {
