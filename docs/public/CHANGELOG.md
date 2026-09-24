@@ -1,12 +1,14 @@
 # CHANGELOG
 
 
-## [1.7.9-2026092402] - 2026-09-24
+## [1.7.9-2026092403] - 2026-09-24
 
 ### Fixed
 
 - Fixed CI publication of the public source snapshot when mirror scripts do not
   have the executable permission bit.
+- Fixed `update-push.sh` execution: the updater no longer contains invalid
+  Markdown fence lines.
 
 
 ## [1.7.9-2026092401] - 2026-09-24

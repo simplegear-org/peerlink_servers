@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
 set -Eeuo pipefail
@@ -1104,4 +1103,3 @@ main() {
 }
 
 main "$@"
-```
