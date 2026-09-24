@@ -18,6 +18,7 @@ Main runtime file:
 - `observability/server-checker.js` — observed-server health checker loop
 - `security/signed-requests.js` — Ed25519 signed request verification and replay cache
 - `security/identity-bindings.js` — v2 peer identity binding and soft migration enforcement
+- `routing/authority-descriptor.js` — descriptor parsing and local active-key readiness checks
 
 Runtime port inside stack:
 - `4500/tcp` (`push` container)
@@ -35,8 +36,10 @@ For servers that keep this checkout on the host, apply an update with one comman
 ```
 
 The script is a standalone protected rollout: it preserves `.env.push.local`,
-restores its operational copy after Git sync, validates nginx before activation
-and performs its own TLS/readiness checks. It pulls versioned `invite`, `push`
+selects only immutable `push-v*` releases (with a legacy `source-v*` fallback
+until the first component tag exists), keeps the newly downloaded updater after
+Git sync, validates nginx before activation and performs its own TLS/readiness
+checks. It pulls versioned `invite`, `push`
 and `server-checker` CI images; it does not build locally or delegate to
 `deploy-push.sh`.
 
@@ -45,6 +48,20 @@ and `server-checker` CI images; it does not build locally or delegate to
 ### `GET /health`
 
 Returns service status and provider configuration flags.
+
+### `GET /routing/descriptor`
+
+Returns the routing authority descriptor when routing authority is configured
+and its active descriptor key matches the local routing private key. The
+endpoint is public because Relay/client discovery needs to retrieve the
+descriptor; clients accept it only after this Push passes encrypted APNs/FCM
+delivery self-check, then verify `authorityId`, origin binding and key validity.
+
+The descriptor contains at most three overlapping Ed25519 public keys
+(`previous/current/next`). `PUSH_ROUTING_PRIVATE_KEY` remains only on Push.
+The application does not pin this key or contain an operator root key, so Push
+key rotation does not require an app update. If the authority is not configured
+or no active key matches, the endpoint returns `404 routing_authority_unavailable`.
 
 ### `POST /send`
 
@@ -356,6 +373,8 @@ Common write errors:
 - `PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE` (`allow` by default; set `drop` only after client rollout)
 - `PUSH_SIGNATURE_SKEW_SECONDS` (default `120`)
 - `PUSH_SIGNED_ID_TTL_SECONDS` (default `300`)
+- `PUSH_ROUTING_PRIVATE_KEY` (base64 PKCS#8 or PEM Ed25519 private key used for future routing tickets)
+- `PUSH_ROUTING_DESCRIPTOR_JSON` (`peerlink_routing_authority_descriptor_v1`; must contain the active public key for `PUSH_ROUTING_PRIVATE_KEY`)
 - `MODERATION_ADMIN_TOKEN` (admin bearer token for moderator UI/API; falls back to `PUSH_API_TOKEN`)
 - `MODERATION_STATUS_SIGNING_PRIVATE_KEY` (optional Ed25519 PKCS#8 private key, PEM or base64 DER, for signed `/moderation/status`)
 

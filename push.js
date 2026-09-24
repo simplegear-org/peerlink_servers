@@ -15,6 +15,7 @@ import { createPushProviders } from './delivery/providers.js';
 import { registerModerationRoutes } from './moderation/routes.js';
 import { moderationPolicyMessage, normalizeModerationAction, normalizeModerationStatus } from './moderation/workflow.js';
 import { createIdentityBindingService } from './security/identity-bindings.js';
+import { createRoutingAuthority } from './routing/authority-descriptor.js';
 import {
   createSignedRequestVerifier,
   verifyEd25519Signature,
@@ -47,6 +48,8 @@ const MAX_DEVICES_PER_USER = Number.parseInt(process.env.PUSH_MAX_DEVICES_PER_US
 const SIGNATURE_SKEW_SECONDS = Number.parseInt(process.env.PUSH_SIGNATURE_SKEW_SECONDS || '120', 10);
 const SIGNED_ID_TTL_SECONDS = Number.parseInt(process.env.PUSH_SIGNED_ID_TTL_SECONDS || '300', 10);
 const MODERATION_STATUS_SIGNING_PRIVATE_KEY = (process.env.MODERATION_STATUS_SIGNING_PRIVATE_KEY || '').trim();
+const PUSH_ROUTING_DESCRIPTOR_JSON = (process.env.PUSH_ROUTING_DESCRIPTOR_JSON || '').trim();
+const PUSH_ROUTING_PRIVATE_KEY = (process.env.PUSH_ROUTING_PRIVATE_KEY || '').trim();
 const PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE =
   (process.env.PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE || 'allow').trim().toLowerCase() === 'drop'
     ? 'drop'
@@ -104,6 +107,13 @@ const {
   enforcePeerIdentityBinding,
 } = identityBindings;
 const signModerationStatus = createModerationStatusSigner(MODERATION_STATUS_SIGNING_PRIVATE_KEY);
+const routingAuthority = createRoutingAuthority({
+  descriptorJson: PUSH_ROUTING_DESCRIPTOR_JSON,
+  privateKeyValue: PUSH_ROUTING_PRIVATE_KEY,
+});
+if (routingAuthority.error) {
+  console.warn('[push][routing] authority unavailable:', routingAuthority.error);
+}
 const notifyModerationPolicy = createModerationPolicyNotifier({
   deviceRegistry,
   pushProviders,
@@ -738,6 +748,10 @@ app.get('/health', async (_req, res) => {
     accessPolicy: {
       missingSnapshotMode: PUSH_ACCESS_POLICY_MISSING_SNAPSHOT_MODE,
     },
+    routingAuthority: {
+      ready: routingAuthority.ready,
+      activeKeyId: routingAuthority.activeKeyId,
+    },
     devices: deviceRegistry.stats(),
     ts: Date.now(),
   });
@@ -756,6 +770,14 @@ app.get('/metrics', async (_req, res) => {
 
 app.get('/.well-known/peerlink-source', (_req, res) => {
   res.json(sourceMetadata);
+});
+
+app.get('/routing/descriptor', (_req, res) => {
+  if (!routingAuthority.ready || !routingAuthority.descriptor) {
+    return res.status(404).json({ error: 'routing_authority_unavailable' });
+  }
+  res.set('Cache-Control', 'public, max-age=300');
+  return res.json(routingAuthority.descriptor);
 });
 
 

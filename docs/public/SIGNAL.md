@@ -221,7 +221,7 @@ PeerLink clients usually use relay together with signaling. Relay endpoints:
 
 For full request/response fields and signature payload formats, see:
 
-- `README.relay.md`
+- `RELAY.md`
 
 Important relay behavior for group traffic:
 

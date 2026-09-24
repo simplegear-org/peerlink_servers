@@ -5,7 +5,22 @@ export function registerRelayMetaRoutes(app, { sourceMetadata, nowMs }) {
   app.get('/.well-known/peerlink-source', (_req, res) => res.json(sourceMetadata));
   app.get('/relay/capabilities', (_req, res) => res.json({
     ok: true, service: 'peerlink-relay', protocolVersion: '1', source: sourceMetadata,
-    features: { health: true, probe: true, store: true, fetch: true, ack: true, groupStore: true, groupMembersUpdate: true, blobUpload: true, blobChunkUpload: true, blobDownload: true },
+    features: {
+      health: true, probe: true, store: true, fetch: true, ack: true,
+      groupStore: true, groupMembersUpdate: true, blobUpload: true,
+      blobChunkUpload: true, blobDownload: true,
+      // Existing durable replication is safe; routed transfer is intentionally
+      // unavailable until its authenticated protocol and authority exist.
+      multiReplicaSafe: true,
+      messageTransfer: false,
+      blobTransfer: false,
+      streamingBlobTransfer: false,
+    },
+    routing: {
+      authorityDiscovery: false,
+      ready: false,
+      transferProtocolVersion: null,
+    },
     auth: { storeRequiresEd25519Signature: true, ackRequiresEd25519Signature: true, groupStoreRequiresEd25519Signature: true, groupMembersUpdateRequiresEd25519Signature: true, blobUploadRequiresEd25519Signature: true, blobUploadCompleteRequiresEd25519Signature: true },
     query: { fetchRecipientParam: 'to', fetchCursorParam: 'cursor', fetchLimitParam: 'limit' }, ts: nowMs(),
   }));

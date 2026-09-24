@@ -13,7 +13,9 @@ COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 BRANCH="${PEERLINK_SERVER_BRANCH:-main}"
 REMOTE="${PEERLINK_SERVER_REMOTE:-origin}"
 REPOSITORY="${PEERLINK_SERVER_REPOSITORY:-https://github.com/simplegear-org/peerlink_servers.git}"
-TARGET_REF="${PEERLINK_SERVER_REF:-$REMOTE/$BRANCH}"
+TARGET_REF="${PEERLINK_SERVER_REF:-}"
+TAG_PATTERN="${PEERLINK_SERVER_TAG_PATTERN:-server-v*}"
+LEGACY_TAG_PATTERN="${PEERLINK_SERVER_LEGACY_TAG_PATTERN:-source-v*}"
 OPS_DIR="${PEERLINK_SERVER_OPS_DIR:-$(dirname "$ROOT_DIR")/.peerlink-server-ops}"
 PROTECTED_SCRIPT="$OPS_DIR/update-server.sh"
 LOCK_DIR="$OPS_DIR/update.lock"
@@ -62,12 +64,19 @@ protect_and_reexec() {
     "$PROTECTED_SCRIPT" "$@"
 }
 
-restore_self_to_repository() {
-  cp -p "$PROTECTED_SCRIPT" "$ROOT_DIR/update-server.sh"
-  chmod +x "$ROOT_DIR/update-server.sh"
+validate_checked_out_updater() {
+  [[ -f "$ROOT_DIR/update-server.sh" ]] || fail "Updated checkout is missing update-server.sh"
   bash -n "$ROOT_DIR/update-server.sh"
-  cmp -s "$PROTECTED_SCRIPT" "$ROOT_DIR/update-server.sh" \
-    || fail "Restored update-server.sh differs from protected copy"
+}
+
+latest_release_ref() {
+  local ref
+  ref="$(git tag --list "$TAG_PATTERN" --sort=-v:refname | head -n 1)"
+  if [[ -z "$ref" ]]; then
+    ref="$(git tag --list "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n 1)"
+  fi
+  [[ -n "$ref" ]] || fail "No server release tag found ($TAG_PATTERN or $LEGACY_TAG_PATTERN)"
+  printf '%s\n' "$ref"
 }
 
 acquire_lock() {
@@ -96,12 +105,28 @@ update_repository() {
   log "Updating repository"
   git remote set-url "$REMOTE" "$REPOSITORY"
   git fetch --tags "$REMOTE" "$BRANCH"
+
+  local selected_ref="$TARGET_REF"
+  if [[ -z "$selected_ref" ]]; then
+    selected_ref="$(latest_release_ref)"
+  fi
+
   local target_commit
-  target_commit="$(git rev-parse --verify "${TARGET_REF}^{commit}")" \
-    || fail "Unknown update ref: $TARGET_REF"
+  target_commit="$(git rev-parse --verify "${selected_ref}^{commit}")" \
+    || fail "Unknown server update ref: $selected_ref"
+
+  echo "Server release:"
+  echo "  $selected_ref"
+  echo "Commit:"
+  echo "  $target_commit"
+
   git checkout -B "$BRANCH" "$target_commit"
   git reset --hard "$target_commit"
-  restore_self_to_repository
+
+  # The protected copy finishes this rollout. Do not copy it back over the
+  # newly downloaded updater; validate the new file for the next invocation.
+  validate_checked_out_updater
+
   echo "Updated to: $(git rev-parse HEAD)"
 }
 
@@ -168,7 +193,6 @@ main() {
   require_command git
   require_command docker
   require_command curl
-  require_command cmp
 
   if [[ "${PEERLINK_SERVER_PROTECTED_RUN:-false}" != "true" ]]; then
     protect_and_reexec "$@"

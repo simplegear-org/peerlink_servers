@@ -8,8 +8,8 @@ set -Eeuo pipefail
 #
 # Responsibilities:
 #   1. Protect this script outside Git working tree.
-#   2. Update repository from origin/main.
-#   3. Restore this known-good local script after git reset.
+#   2. Resolve the latest immutable push-v* release (legacy source-v* fallback).
+#   3. Keep the newly downloaded updater in the working tree after git reset.
 #   4. Validate env / compose / FCM credentials.
 #   5. Pull versioned application images before touching running containers.
 #   6. Generate nginx configuration.
@@ -37,6 +37,10 @@ ENV_FILE="${PEERLINK_PUSH_ENV_FILE:-$ROOT_DIR/.env.push.local}"
 
 BRANCH="${PEERLINK_PUSH_BRANCH:-main}"
 REMOTE="${PEERLINK_PUSH_REMOTE:-origin}"
+REPOSITORY="${PEERLINK_PUSH_REPOSITORY:-https://github.com/simplegear-org/peerlink_servers.git}"
+TARGET_REF="${PEERLINK_PUSH_REF:-}"
+TAG_PATTERN="${PEERLINK_PUSH_TAG_PATTERN:-push-v*}"
+LEGACY_TAG_PATTERN="${PEERLINK_PUSH_LEGACY_TAG_PATTERN:-source-v*}"
 
 DEPLOY_DIR="$ROOT_DIR/deploy/push"
 
@@ -137,22 +141,24 @@ protect_and_reexec() {
     PEERLINK_PUSH_OPS_DIR="$OPS_DIR" \
     PEERLINK_PUSH_BRANCH="$BRANCH" \
     PEERLINK_PUSH_REMOTE="$REMOTE" \
+    PEERLINK_PUSH_REPOSITORY="$REPOSITORY" \
+    PEERLINK_PUSH_REF="$TARGET_REF" \
     "$PROTECTED_SCRIPT" "$@"
 }
 
-restore_self_to_repository() {
-  log "Restoring protected update-push.sh"
-
-  cp -p "$PROTECTED_SCRIPT" "$ROOT_DIR/update-push.sh"
-  chmod +x "$ROOT_DIR/update-push.sh"
-
+validate_checked_out_updater() {
+  [[ -f "$ROOT_DIR/update-push.sh" ]] || fail "Updated checkout is missing update-push.sh"
   bash -n "$ROOT_DIR/update-push.sh"
+}
 
-  if ! cmp -s "$PROTECTED_SCRIPT" "$ROOT_DIR/update-push.sh"; then
-    fail "Restored update-push.sh differs from protected copy"
+latest_release_ref() {
+  local ref
+  ref="$(git tag --list "$TAG_PATTERN" --sort=-v:refname | head -n 1)"
+  if [[ -z "$ref" ]]; then
+    ref="$(git tag --list "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n 1)"
   fi
-
-  echo "Protected operational script restored."
+  [[ -n "$ref" ]] || fail "No push release tag found ($TAG_PATTERN or $LEGACY_TAG_PATTERN)"
+  printf '%s\n' "$ref"
 }
 
 ###############################################################################
@@ -266,26 +272,39 @@ update_repository() {
   log "Updating repository"
 
   local old_commit
-  local new_commit
+  local selected_ref="$TARGET_REF"
+  local target_commit
 
   old_commit="$(git rev-parse HEAD)"
-
   echo "Current:"
   echo "  $old_commit"
 
-  git fetch "$REMOTE" "$BRANCH"
+  git remote set-url "$REMOTE" "$REPOSITORY"
+  git fetch --tags "$REMOTE" "$BRANCH"
 
-  git checkout -B "$BRANCH" "$REMOTE/$BRANCH"
+  if [[ -z "$selected_ref" ]]; then
+    selected_ref="$(latest_release_ref)"
+  fi
 
-  git reset --hard "$REMOTE/$BRANCH"
+  target_commit="$(git rev-parse --verify "${selected_ref}^{commit}")" \
+    || fail "Unknown push update ref: $selected_ref"
 
-  new_commit="$(git rev-parse HEAD)"
+  echo
+  echo "Push release:"
+  echo "  $selected_ref"
+  echo "Commit:"
+  echo "  $target_commit"
+
+  git checkout -B "$BRANCH" "$target_commit"
+  git reset --hard "$target_commit"
+
+  # Finish this rollout from the protected copy, but retain the newly
+  # downloaded updater for the next invocation.
+  validate_checked_out_updater
 
   echo
   echo "Updated:"
-  echo "  $new_commit"
-
-  restore_self_to_repository
+  echo "  $(git rev-parse HEAD)"
 }
 
 ###############################################################################
@@ -1001,7 +1020,6 @@ main() {
   require_command git
   require_command docker
   require_command curl
-  require_command cmp
 
   #
   # Critical:

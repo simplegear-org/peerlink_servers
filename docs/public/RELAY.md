@@ -75,6 +75,14 @@ Returns service status:
 
 ### `GET /relay/capabilities`
 
+Returns backward-compatible relay capability metadata. Current durable relay
+replication advertises `features.multiReplicaSafe=true`. Routed transfer,
+streaming transfer and routing-authority discovery are explicitly unavailable
+until their authenticated protocols are deployed (`messageTransfer=false`,
+`blobTransfer=false`, `streamingBlobTransfer=false`,
+`routing.ready=false`). Clients must keep normal store/fetch behavior when a
+legacy relay omits these fields or reports routing unavailable.
+
 Returns protocol-level server capabilities without requiring a signed relay
 request. This endpoint is intended for client compatibility checks and should
 be used in addition to `/health`.

@@ -46,6 +46,8 @@ PEERLINK_AUTO_UPDATE_ROOT_DIR=$SCRIPT_DIR
 PEERLINK_AUTO_UPDATE_REMOTE=origin
 PEERLINK_AUTO_UPDATE_BRANCH=main
 PEERLINK_AUTO_UPDATE_REPOSITORY=https://github.com/simplegear-org/peerlink_servers.git
+PEERLINK_AUTO_UPDATE_TAG_PATTERN=server-v*
+PEERLINK_AUTO_UPDATE_LEGACY_TAG_PATTERN=source-v*
 # Set true only after importing the trusted release-signing key into root's keyring.
 PEERLINK_AUTO_UPDATE_REQUIRE_SIGNED_TAG=false
 # Major releases require explicit owner approval by default.
