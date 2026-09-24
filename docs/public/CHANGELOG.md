@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## [1.7.9-2026092404] - 2026-09-24
+
+### Fixed
+
+- Fixed the Push image build to include routing authority descriptor modules,
+  allowing Push to start after the Routing foundation update.
+
+
 ## [1.7.9-2026092403] - 2026-09-24
 
 ### Fixed
