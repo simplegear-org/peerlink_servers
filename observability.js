@@ -244,13 +244,18 @@ export class PushObservability {
     }
     if (this.dbReady) {
       const current = await this.pool.query(
-        `select policy_version from push_user_policy where user_id = $1`,
+        `select policy_version, snapshot_hash from push_user_policy where user_id = $1`,
         [userId],
       );
       const currentVersion = Number(current.rows[0]?.policy_version ?? -1);
       if (current.rows[0] && version < currentVersion) {
         this.policySync.inc({ result: 'stale' });
-        return { ok: true, stale: true, policyVersion: currentVersion };
+        return {
+          ok: true,
+          stale: true,
+          policyVersion: currentVersion,
+          snapshotHash: current.rows[0].snapshot_hash || '',
+        };
       }
       const client = await this.pool.connect();
       try {
@@ -309,7 +314,12 @@ export class PushObservability {
       const current = this.pushUserPolicies.get(userId);
       if (current && version < Number(current.policyVersion || 0)) {
         this.policySync.inc({ result: 'stale' });
-        return { ok: true, stale: true, policyVersion: current.policyVersion };
+        return {
+          ok: true,
+          stale: true,
+          policyVersion: current.policyVersion,
+          snapshotHash: current.snapshotHash || '',
+        };
       }
     }
     this.pushUserPolicies.set(userId, {

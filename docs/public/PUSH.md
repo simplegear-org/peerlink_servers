@@ -158,6 +158,10 @@ Request body:
 - `updatedAt` (client timestamp)
 - `snapshotHash` (optional idempotency/diagnostic hash)
 
+When a request is stale, the successful response includes the authoritative
+`policyVersion` and `snapshotHash`. A client whose hash already matches must
+adopt that version without writing an identical snapshot again.
+
 Signature payload:
 
 Schema v1:

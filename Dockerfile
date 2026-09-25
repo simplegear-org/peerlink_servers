@@ -14,8 +14,8 @@ COPY routing ./routing
 COPY security ./security
 
 FROM base AS relay
-ARG PEERLINK_SERVERS_VERSION=1.7.9-2026092404
-ARG PEERLINK_SOURCE_REF=source-v1.7.9-2026092404
+ARG PEERLINK_SERVERS_VERSION=1.7.10-2026092501
+ARG PEERLINK_SOURCE_REF=source-v1.7.10-2026092501
 LABEL org.opencontainers.image.title="PeerLink Relay" \
       org.opencontainers.image.description="WebSocket relay channel for PeerLink - handles message forwarding between WebRTC peers" \
       org.opencontainers.image.version="${PEERLINK_SERVERS_VERSION}" \
@@ -29,8 +29,8 @@ EXPOSE 4000
 CMD ["node", "relay.js"]
 
 FROM base AS signal
-ARG PEERLINK_SERVERS_VERSION=1.7.9-2026092404
-ARG PEERLINK_SOURCE_REF=source-v1.7.9-2026092404
+ARG PEERLINK_SERVERS_VERSION=1.7.10-2026092501
+ARG PEERLINK_SOURCE_REF=source-v1.7.10-2026092501
 LABEL org.opencontainers.image.title="PeerLink Signal" \
       org.opencontainers.image.description="Bootstrap signaling server for PeerLink - manages peer registration and WebRTC signaling" \
       org.opencontainers.image.version="${PEERLINK_SERVERS_VERSION}" \
@@ -44,8 +44,8 @@ EXPOSE 3000
 CMD ["node", "signal.js"]
 
 FROM base AS push
-ARG PEERLINK_SERVERS_VERSION=1.7.9-2026092404
-ARG PEERLINK_SOURCE_REF=source-v1.7.9-2026092404
+ARG PEERLINK_SERVERS_VERSION=1.7.10-2026092501
+ARG PEERLINK_SOURCE_REF=source-v1.7.10-2026092501
 LABEL org.opencontainers.image.title="PeerLink Push" \
       org.opencontainers.image.description="Push provider service for PeerLink - routes internal push requests to APNs/FCM" \
       org.opencontainers.image.version="${PEERLINK_SERVERS_VERSION}" \
@@ -64,8 +64,8 @@ EXPOSE 4600
 CMD ["node", "invite.js"]
 
 FROM base AS server-checker
-ARG PEERLINK_SERVERS_VERSION=1.7.9-2026092404
-ARG PEERLINK_SOURCE_REF=source-v1.7.9-2026092404
+ARG PEERLINK_SERVERS_VERSION=1.7.10-2026092501
+ARG PEERLINK_SOURCE_REF=source-v1.7.10-2026092501
 LABEL org.opencontainers.image.title="PeerLink Server Checker" \
       org.opencontainers.image.description="Observed PeerLink server health checker" \
       org.opencontainers.image.version="${PEERLINK_SERVERS_VERSION}" \

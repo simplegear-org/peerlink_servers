@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## [1.7.10-2026092501] - 2026-09-25
+
+### Changed
+
+- `update-push.sh` now exposes `POST /devices/self-check` through the public
+  nginx proxy.
+- Stale access-policy responses now return their stored snapshot hash, allowing
+  clients to adopt an identical policy version without rewriting it.
+
+
 ## [1.7.9-2026092404] - 2026-09-24
 
 ### Fixed

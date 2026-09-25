@@ -504,6 +504,21 @@ write_nginx_locations() {
         proxy_read_timeout 60s;
     }
 
+    location = /devices/self-check {
+        limit_except POST { deny all; }
+
+        proxy_pass http://peerlink_push_backend/devices/self-check;
+
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 60s;
+    }
+
     location = /devices/access-policy {
         limit_except POST { deny all; }
 
