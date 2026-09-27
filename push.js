@@ -3,6 +3,11 @@
 import express from 'express';
 import crypto from 'crypto';
 import { sourceInfo } from './source-info.js';
+import {
+  isSilentWakeUp,
+  isVisibleChatMessagePush,
+  requiresAccessPolicy,
+} from './delivery/notification-policy.js';
 import { PushObservability } from './observability.js';
 import {
   createDeviceRegistry,
@@ -882,7 +887,14 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
   const senderUserId = normalizeUserId(req.body?.senderUserId);
   const recipientUserIds = normalizeRecipients(req.body?.recipientUserIds);
   const payload = normalizeJsonValue(req.body?.payload);
-  const notification = normalizeNotification(req.body?.notification);
+  const requestedNotification = normalizeNotification(req.body?.notification);
+  const visibleChatMessage = isVisibleChatMessagePush({
+    payload,
+    notification: requestedNotification,
+  });
+  // Push transports only a client-declared, allow-listed chat alert. Every
+  // service event, including legacy group controls, is forced to data-only.
+  const notification = visibleChatMessage ? requestedNotification : null;
   const delivery = normalizeDelivery(req.body?.delivery);
   if (!senderUserId || recipientUserIds.length === 0 || !payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'invalid_payload' });
@@ -906,8 +918,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       bannedRecipients: moderationAllowedRecipients.banned,
     });
   }
-  const isAccessFilteredEvent =
-    payload.type === 'direct_update' || payload.type === 'group_update' || payload.type === 'call_invite';
+  const isAccessFilteredEvent = requiresAccessPolicy({ payload });
   const notificationMute = notificationMuteForPayload(payload, senderUserId);
   const accessAllowedRecipients = isAccessFilteredEvent
     ? await observability.filterByAccessPolicy({
@@ -987,19 +998,14 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const platform = (target.platform || '').toLowerCase();
       const isCallInvite = payload.type === 'call_invite';
       const isMessageUpdate = payload.type === 'direct_update' || payload.type === 'group_update';
-      const isAccessFilteredTarget = isMessageUpdate || isCallInvite;
+      const isAccessFilteredTarget = isAccessFilteredEvent;
       const isAndroidTarget = platform === 'android';
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
-      const useNativeMessageFilter = isMessageUpdate && isAndroidTarget;
-      const useIosAlertMessagePush = isMessageUpdate && isIosTarget;
+      const useNativeMessageFilter = visibleChatMessage && isAndroidTarget;
+      const useIosAlertMessagePush = visibleChatMessage && isIosTarget;
       const provider = (target.messageProvider || 'fcm').toLowerCase();
-      const effectiveNotification = useIosAlertMessagePush && !notification
-        ? {
-            title: 'PeerLink',
-            body: payload.type === 'group_update' ? 'New group message' : 'New message',
-          }
-        : notification;
+      const effectiveNotification = notification;
       const hasNotificationText = Boolean(effectiveNotification?.title || effectiveNotification?.body);
       const targetPolicy = isAccessFilteredTarget
         ? await observability.decideAccessPolicy({

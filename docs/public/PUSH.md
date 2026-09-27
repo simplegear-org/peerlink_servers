@@ -208,8 +208,9 @@ Fanout behavior:
   VoIP path only. If the device has no active VoIP token, standard delivery
   remains as a fallback. Android still receives standard FCM data-only call
   invites.
-- For `direct_update`, `group_update`, and incoming `call_invite`, the server
-  checks the recipient's stored access-policy snapshot before fanout: blocked
+- For `direct_update`, `group_update`, and incoming `call_invite`, except an
+  explicit `wakeUpOnly` service event, the server checks the recipient's stored
+  access-policy snapshot before fanout: blocked
   senders are dropped, contacts-only recipients only allow known contacts, and
   schema-v2 mute lists suppress only their matching notification channel.
   `mutedMessage*` never suppresses calls; `mutedCall*` never suppresses message
@@ -230,11 +231,18 @@ Fanout behavior:
   - policy decision metrics/logs use distinct `muted_message_peer`,
     `muted_message_group`, `muted_call_peer`, and `muted_call_group` reasons
     without recording message content.
-- After allow, iOS `direct_update`/`group_update` uses visible alert delivery
-  with APNs priority `10` and `mutable-content: 1`, so iOS can show the push even
-  when the app is suspended. Android message/update delivery remains data-only
-  with high priority.
-- If `notification.title/body` is omitted, standard delivery is silent/data-only. This is the required path for Android `call_invite`, where the client decides foreground/fullscreen presentation.
+- The server never invents an alert. It forwards a visible alert only for a
+  `direct_update` or `group_update` whose client-supplied body is one of
+  `Text`, `Photo`, `Video`, `Voice`, `Location`, or `File`. This protects older
+  clients that attached visible notifications to service event names.
+- `payload.wakeUpOnly=true` is reserved for service wake-ups (key rotation,
+  membership and other control delivery). The server discards a supplied
+  `notification`, bypasses message block/mute filtering, and sends it data-only
+  on every platform, including iOS. Relay authorization remains authoritative.
+- Android visible chat messages remain data-only with high priority so the app
+  performs local presentation; iOS receives an APNs alert only when the above
+  client-declared chat-content rule is met. Calls retain their separate VoIP
+  path and call mute/block policy.
 
 APNs headers used by push service:
 - `apns-push-type: voip`

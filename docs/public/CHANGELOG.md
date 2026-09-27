@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## [1.7.12-2026092701] - 2026-09-27
+
+### Changed
+
+- Push no longer creates an iOS alert from a technical event. It forwards an
+  alert only for allow-listed direct/group chat content explicitly supplied by
+  the client.
+- Group-control wake-ups, including legacy key and membership events, are now
+  forced to data-only delivery on every platform. They bypass message mute and
+  access-policy filtering so key and membership reconciliation is not delayed.
+- Direct/group messages and call invites keep their existing server-side block,
+  contacts-only, and matching mute enforcement.
+
+
 ## [1.7.11-2026092601] - 2026-09-26
 
 ### Changed
