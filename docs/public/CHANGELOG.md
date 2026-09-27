@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## [1.7.13-2026092702] - 2026-09-27
+
+### Changed
+
+- Relay no longer persists or compares the numeric group administrator
+  `delegationVersion`. The version remains on the group owner's device; a
+  signed owner update replaces the current administrator-token snapshot, so
+  revoked tokens are rejected immediately without a relay-side version
+  conflict.
+
+
 ## [1.7.12-2026092701] - 2026-09-27
 
 ### Changed

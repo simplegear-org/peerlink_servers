@@ -232,14 +232,12 @@ export function registerRelayDataRoutes(app, dependencies) {
       return res.status(409).json({ error: 'owner mismatch' });
     }
 
+    let validatedAdminDelegations = null;
     if (from === ownerPeerId) {
       const requestedDelegationVersion = body.delegationVersion;
       const hasDelegationVersion = requestedDelegationVersion !== undefined;
       if (hasDelegationVersion && (!Number.isInteger(requestedDelegationVersion) || requestedDelegationVersion < 0)) {
         return res.status(400).json({ error: 'invalid delegationVersion' });
-      }
-      if (hasDelegationVersion && existing && !existing.provisional && requestedDelegationVersion <= (existing.delegationVersion || 0)) {
-        return res.status(409).json({ error: 'delegationVersion must increase' });
       }
       if (hasDelegationVersion && !Array.isArray(body.adminDelegations)) {
         return res.status(400).json({ error: 'adminDelegations required with delegationVersion' });
@@ -252,6 +250,7 @@ export function registerRelayDataRoutes(app, dependencies) {
         signingPubB64: signingPub,
       });
       if (!verified) return res.status(401).json({ error: 'invalid signature' });
+      validatedAdminDelegations = {};
       if (hasDelegationVersion) {
         for (const delegation of body.adminDelegations) {
           if (!delegation || typeof delegation !== 'object') return res.status(400).json({ error: 'invalid admin delegation' });
@@ -267,6 +266,11 @@ export function registerRelayDataRoutes(app, dependencies) {
             signingPubB64: ownerSigningPub,
           });
           if (!delegationVerified) return res.status(401).json({ error: 'invalid reissued admin delegation signature' });
+          validatedAdminDelegations[adminPeerId] = {
+            ownerSig,
+            delegationVersion,
+            expiresAtMs,
+          };
         }
       }
     } else {
@@ -285,7 +289,13 @@ export function registerRelayDataRoutes(app, dependencies) {
       const requiredPermission = memberAction === 'add' ? 'members:add' : 'members:remove';
       if (!permissions.includes(requiredPermission)) return res.status(403).json({ error: 'admin delegation forbids operation' });
       if (!existing || existing.provisional || existing.expiredAtMs) return res.status(409).json({ error: 'owner membership update required' });
-      if ((existing.delegationVersion || 0) !== delegationVersion) return res.status(403).json({ error: 'admin delegation version revoked' });
+      const currentDelegation = existing.adminDelegations?.[from];
+      if (
+        !currentDelegation ||
+        currentDelegation.ownerSig !== ownerSig ||
+        currentDelegation.delegationVersion !== delegationVersion ||
+        currentDelegation.expiresAtMs !== expiresAtMs
+      ) return res.status(403).json({ error: 'admin delegation revoked' });
       const protectedIds = normalizePeerIdList(protectedPeerIds);
       if (!protectedIds.includes(ownerPeerId) || changedPeerIds.some((peerId) => protectedIds.includes(peerId))) {
         return res.status(403).json({ error: 'admin cannot change protected member' });
@@ -312,9 +322,9 @@ export function registerRelayDataRoutes(app, dependencies) {
     groupMemberships.set(groupId, {
       ownerPeerId,
       memberPeerIds: new Set(normalizedMembers),
-      delegationVersion: from === ownerPeerId
-        ? (body.delegationVersion === undefined ? (existing?.delegationVersion || 0) : body.delegationVersion)
-        : (existing?.delegationVersion || 0),
+      adminDelegations: from === ownerPeerId && body.delegationVersion !== undefined
+        ? validatedAdminDelegations
+        : (existing?.adminDelegations || {}),
       updatedAtMs: nowMs(),
       provisional: false,
     });

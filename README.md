@@ -21,6 +21,15 @@ The base Relay/Signal/TURN stack and Push stack are deployed independently.
 Operational commands, required environment variables and rollout checks are
 documented in the service guides above.
 
+## Group-role authority
+
+Only the group owner assigns or revokes administrator roles. The owner's
+device stores and advances `delegationVersion`; Relay verifies that value only
+as part of owner-signed payloads and does not persist or compare the number.
+For server-side enforcement of administrator add/remove actions, Relay retains
+the current owner-published signed-token snapshot with group membership. A new
+owner role update atomically replaces that snapshot and rejects revoked tokens.
+
 ## Documentation
 
 - [Security policy](docs/public/SECURITY.md)

@@ -279,8 +279,9 @@ The owner signature payload is:
 `v1|groupId|adminPeerId|permission1,permission2,...|expiresAtMs|delegationVersion|protectedPeer1,protectedPeer2,...`
 
 PeerLink clients issue these tokens with `expiresAtMs` set 999 days after
-issuance. Relay always relies on the signed expiry and can revoke a token
-earlier through `delegationVersion` rotation.
+issuance. `delegationVersion` is owned and advanced only by the group-owner
+client; relay verifies it as part of the signed token but does not persist or
+compare the numeric value.
 
 The administrator signs the complete v2 update, including the delegation
 identity:
@@ -289,14 +290,13 @@ identity:
 
 Every peer-id and permission list in these payloads is canonicalized as
 trimmed, unique, lexicographically sorted values before signing or checking.
-The owner advances the signed `delegationVersion` in a v3 owner membership
-update to revoke all tokens from earlier versions; the relay persists only this
-single version alongside membership. A versioned owner update must strictly
-increase the stored version and include `adminDelegations`: the complete set of
-new, owner-signed tokens for administrators that retain access. The relay
-validates these replacement tokens but does not retain them. Consequently,
-removing an administrator is atomic: the old token is rejected immediately and
-only reissued tokens at the new version can authorize subsequent updates.
+The owner advances the signed `delegationVersion` locally in a v3 owner
+membership update and includes `adminDelegations`: the complete current set of
+owner-signed administrator tokens. Relay does not store or compare the version;
+it retains only the current token identities (signature, expiry, and embedded
+version) with membership to reject a removed or replaced administrator token.
+Consequently, removing an administrator is atomic: its old token no longer
+matches the owner-published current token set.
 
 If the relay only has provisional membership created by `/relay/group/store`,
 this signed owner update replaces the provisional owner. Once an owner update
