@@ -240,7 +240,7 @@ Updates authoritative group membership on relay.
 Required body fields:
 
 - `id` (string)
-- `from` (string, must equal `ownerPeerId`)
+- `from` (string; equals `ownerPeerId` for an owner update, or the delegated administrator)
 - `groupId` (string)
 - `ownerPeerId` (string)
 - `memberPeerIds` (array of peerIds)
@@ -251,7 +251,52 @@ Required body fields:
 
 Signature payload for verification:
 
-`id|from|groupId|ownerPeerId|member1,member2,...|ts|ttl`
+Owner update: `id|from|groupId|ownerPeerId|member1,member2,...|ts|ttl`.
+
+An owner that sets or revokes administrator delegations also sends integer
+`delegationVersion >= 0`; that value is part of its v3 signed payload:
+
+`v3|id|from|groupId|ownerPeerId|member1,member2,...|ts|ttl|delegationVersion`
+
+Delegated administrator update additionally carries `memberAction` (`add` or
+`remove`), `changedPeerIds`, and `adminDelegation`. The delegation is an
+owner-signed token containing `groupId`, `adminPeerId`, exactly the permitted
+membership actions, expiry, version, and `protectedPeerIds`. The relay verifies
+the owner signature on the token and the administrator signature on the v2
+update payload, requires an exact membership delta, and rejects changes to the
+owner or any protected peer. The relay does not persist an administrator list.
+
+`adminDelegation` fields:
+
+- `version: 1`
+- `groupId`, `adminPeerId`
+- `permissions`: `members:add` and/or `members:remove`
+- `expiresAtMs`, `delegationVersion`, `protectedPeerIds`
+- `ownerSigningPub`, `ownerSig`
+
+The owner signature payload is:
+
+`v1|groupId|adminPeerId|permission1,permission2,...|expiresAtMs|delegationVersion|protectedPeer1,protectedPeer2,...`
+
+PeerLink clients issue these tokens with `expiresAtMs` set 999 days after
+issuance. Relay always relies on the signed expiry and can revoke a token
+earlier through `delegationVersion` rotation.
+
+The administrator signs the complete v2 update, including the delegation
+identity:
+
+`v2|id|from|groupId|ownerPeerId|member1,member2,...|ts|ttl|memberAction|changedPeer1,changedPeer2,...|delegationVersion|expiresAtMs|ownerSig`
+
+Every peer-id and permission list in these payloads is canonicalized as
+trimmed, unique, lexicographically sorted values before signing or checking.
+The owner advances the signed `delegationVersion` in a v3 owner membership
+update to revoke all tokens from earlier versions; the relay persists only this
+single version alongside membership. A versioned owner update must strictly
+increase the stored version and include `adminDelegations`: the complete set of
+new, owner-signed tokens for administrators that retain access. The relay
+validates these replacement tokens but does not retain them. Consequently,
+removing an administrator is atomic: the old token is rejected immediately and
+only reissued tokens at the new version can authorize subsequent updates.
 
 If the relay only has provisional membership created by `/relay/group/store`,
 this signed owner update replaces the provisional owner. Once an owner update
@@ -378,6 +423,9 @@ Signature payload for verification:
 - Signature verification failure returns `401` with `{"error":"invalid signature"}`
 - Membership violation returns `403`
 - Owner mismatch on membership update returns `409`
+- Missing, expired, revoked or insufficient administrator delegation returns
+  `403`; malformed delegation returns `400`; a non-matching membership delta
+  returns `409`
 - Valid requests are accepted and processed
 
 ## Local run

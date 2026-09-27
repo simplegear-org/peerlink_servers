@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## [1.7.11-2026092601] - 2026-09-26
+
+### Changed
+
+- Relay group-membership updates now support bounded owner-signed delegation
+  to administrators. A delegated administrator can add or remove only regular
+  members through an independently signed, exact membership delta; owner and
+  protected peers cannot be changed.
+- Delegation tokens expire and are invalidated when the owner advances the
+  signed delegation version. Relay persists the owner, membership and current
+  version only; it does not persist an administrator list.
+- Removing an administrator now requires an atomic version increase and a
+  complete set of reissued tokens for administrators that remain. The relay
+  validates but does not store those replacement tokens.
+- PeerLink clients now issue group administrator delegation tokens for 999
+  days; a signed delegation-version rotation still revokes them immediately.
+
+
 ## [1.7.10-2026092501] - 2026-09-25
 
 ### Changed

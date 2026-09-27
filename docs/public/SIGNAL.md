@@ -227,7 +227,10 @@ Important relay behavior for group traffic:
 
 - relay enforces server-side membership for `group/store`
 - relay treats blob upload endpoints as storage-only signed writes; group delivery authorization happens on `group/store`
-- client owner should sync membership using `POST /relay/group/members/update`
+- client owner syncs membership using `POST /relay/group/members/update`; an
+  administrator may submit only an owner-delegated, signed `add`/`remove`
+  update. The Relay contract defines expiry, delegation-version revocation and
+  protected peers.
 
 ## Local run
 

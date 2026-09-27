@@ -23,14 +23,11 @@ documented in the service guides above.
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
 - [Security policy](docs/public/SECURITY.md)
 - [Contributing](docs/public/CONTRIBUTING.md)
 - [Changelog](docs/public/CHANGELOG.md)
 - [License history](docs/public/LICENSE-HISTORY.md)
 - [Third-party notices](docs/public/THIRD_PARTY_NOTICES.md)
-
-Russian overview: [README_RU.md](README_RU.md).
 
 ## License
 

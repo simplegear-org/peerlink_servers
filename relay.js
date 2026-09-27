@@ -3,7 +3,7 @@
 import express from 'express';
 import {
   buildAckSignaturePayload, buildBlobSignaturePayload, buildEnvelopeSignaturePayload,
-  buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, envelopeKey,
+  buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, buildGroupAdminDelegationPayload, buildOwnerGroupMembersV2SignaturePayload, buildDelegatedGroupMembersSignaturePayload, envelopeKey,
   normalizePeerIdList, parseBase64, uploadKey, verifyEd25519Signature,
 } from './relay-validation.js';
 import { createRelayLifecycle } from './relay-lifecycle.js';
@@ -61,7 +61,7 @@ const {
 registerRelayMetaRoutes(app, { sourceMetadata, nowMs });
 
 
-registerRelayDataRoutes(app, { store, blobs, blobUploads, groupMemberships, acked, nowMs, pruneRecipient, pruneBlobs, pruneAckTombstones, pruneGroupMemberships, envelopeKey, uploadKey, normalizePeerIdList, parseBase64, buildEnvelopeSignaturePayload, buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, buildBlobSignaturePayload, buildAckSignaturePayload, verifyEd25519Signature, ackTombstoneTtlSeconds: ACK_TOMBSTONE_TTL_SECONDS });
+registerRelayDataRoutes(app, { store, blobs, blobUploads, groupMemberships, acked, nowMs, pruneRecipient, pruneBlobs, pruneAckTombstones, pruneGroupMemberships, envelopeKey, uploadKey, normalizePeerIdList, parseBase64, buildEnvelopeSignaturePayload, buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, buildGroupAdminDelegationPayload, buildOwnerGroupMembersV2SignaturePayload, buildDelegatedGroupMembersSignaturePayload, buildBlobSignaturePayload, buildAckSignaturePayload, verifyEd25519Signature, ackTombstoneTtlSeconds: ACK_TOMBSTONE_TTL_SECONDS });
 
 app.listen(PORT, () => {
   console.log(`[relay] listening on :${PORT}`);

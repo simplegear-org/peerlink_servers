@@ -3,7 +3,7 @@
 import { requireRequestFields, requireRequestObject } from './relay-request-validation.js';
 
 export function registerRelayDataRoutes(app, dependencies) {
-  const { store, blobs, blobUploads, groupMemberships, acked, nowMs, pruneRecipient, pruneBlobs, pruneAckTombstones, pruneGroupMemberships, envelopeKey, uploadKey, normalizePeerIdList, parseBase64, buildEnvelopeSignaturePayload, buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, buildBlobSignaturePayload, buildAckSignaturePayload, verifyEd25519Signature, ackTombstoneTtlSeconds } = dependencies;
+  const { store, blobs, blobUploads, groupMemberships, acked, nowMs, pruneRecipient, pruneBlobs, pruneAckTombstones, pruneGroupMemberships, envelopeKey, uploadKey, normalizePeerIdList, parseBase64, buildEnvelopeSignaturePayload, buildGroupEnvelopeSignaturePayload, buildGroupMembersSignaturePayload, buildGroupAdminDelegationPayload, buildOwnerGroupMembersV2SignaturePayload, buildDelegatedGroupMembersSignaturePayload, buildBlobSignaturePayload, buildAckSignaturePayload, verifyEd25519Signature, ackTombstoneTtlSeconds } = dependencies;
   app.post('/relay/store', (req, res) => {
     const body = req.body;
     if (!requireRequestObject(body, res)) return;
@@ -219,10 +219,6 @@ export function registerRelayDataRoutes(app, dependencies) {
     if (!Number.isFinite(ts) || !Number.isFinite(ttl)) {
       return res.status(400).json({ error: 'invalid ts/ttl' });
     }
-    if (from !== ownerPeerId) {
-      return res.status(403).json({ error: 'only owner can update members' });
-    }
-  
     const normalizedMembers = normalizePeerIdList(memberPeerIds);
     if (normalizedMembers.length === 0) {
       return res.status(400).json({ error: 'empty memberPeerIds' });
@@ -231,32 +227,94 @@ export function registerRelayDataRoutes(app, dependencies) {
       return res.status(400).json({ error: 'owner must be in memberPeerIds' });
     }
   
-    const signaturePayload = buildGroupMembersSignaturePayload({
-      id,
-      from,
-      groupId,
-      ownerPeerId,
-      memberPeerIds: normalizedMembers,
-      timestampMs: ts,
-      ttlSeconds: ttl,
-    });
-    const verified = verifyEd25519Signature({
-      payloadBytes: signaturePayload,
-      signatureB64: sig,
-      signingPubB64: signingPub,
-    });
-    if (!verified) {
-      return res.status(401).json({ error: 'invalid signature' });
-    }
-  
     const existing = groupMemberships.get(groupId);
     if (existing && !existing.expiredAtMs && existing.ownerPeerId !== ownerPeerId && !existing.provisional) {
       return res.status(409).json({ error: 'owner mismatch' });
+    }
+
+    if (from === ownerPeerId) {
+      const requestedDelegationVersion = body.delegationVersion;
+      const hasDelegationVersion = requestedDelegationVersion !== undefined;
+      if (hasDelegationVersion && (!Number.isInteger(requestedDelegationVersion) || requestedDelegationVersion < 0)) {
+        return res.status(400).json({ error: 'invalid delegationVersion' });
+      }
+      if (hasDelegationVersion && existing && !existing.provisional && requestedDelegationVersion <= (existing.delegationVersion || 0)) {
+        return res.status(409).json({ error: 'delegationVersion must increase' });
+      }
+      if (hasDelegationVersion && !Array.isArray(body.adminDelegations)) {
+        return res.status(400).json({ error: 'adminDelegations required with delegationVersion' });
+      }
+      const verified = verifyEd25519Signature({
+        payloadBytes: hasDelegationVersion
+          ? buildOwnerGroupMembersV2SignaturePayload({ id, from, groupId, ownerPeerId, memberPeerIds: normalizedMembers, timestampMs: ts, ttlSeconds: ttl, delegationVersion: requestedDelegationVersion })
+          : buildGroupMembersSignaturePayload({ id, from, groupId, ownerPeerId, memberPeerIds: normalizedMembers, timestampMs: ts, ttlSeconds: ttl }),
+        signatureB64: sig,
+        signingPubB64: signingPub,
+      });
+      if (!verified) return res.status(401).json({ error: 'invalid signature' });
+      if (hasDelegationVersion) {
+        for (const delegation of body.adminDelegations) {
+          if (!delegation || typeof delegation !== 'object') return res.status(400).json({ error: 'invalid admin delegation' });
+          const { version, groupId: delegatedGroupId, adminPeerId, permissions, expiresAtMs, delegationVersion, protectedPeerIds, ownerSigningPub, ownerSig } = delegation;
+          if (
+            version !== 1 || delegatedGroupId !== groupId || typeof adminPeerId !== 'string' ||
+            !Array.isArray(permissions) || !Number.isFinite(expiresAtMs) || delegationVersion !== requestedDelegationVersion ||
+            !Array.isArray(protectedPeerIds) || ownerSigningPub !== signingPub || typeof ownerSig !== 'string' || expiresAtMs < nowMs()
+          ) return res.status(400).json({ error: 'invalid reissued admin delegation' });
+          const delegationVerified = verifyEd25519Signature({
+            payloadBytes: buildGroupAdminDelegationPayload({ groupId, adminPeerId, permissions, expiresAtMs, delegationVersion, protectedPeerIds }),
+            signatureB64: ownerSig,
+            signingPubB64: ownerSigningPub,
+          });
+          if (!delegationVerified) return res.status(401).json({ error: 'invalid reissued admin delegation signature' });
+        }
+      }
+    } else {
+      const delegation = body.adminDelegation;
+      if (!delegation || typeof delegation !== 'object') return res.status(403).json({ error: 'owner delegation required' });
+      const { version, groupId: delegatedGroupId, adminPeerId, permissions, expiresAtMs, delegationVersion, protectedPeerIds, ownerSigningPub, ownerSig } = delegation;
+      const memberAction = body.memberAction;
+      const changedPeerIds = normalizePeerIdList(body.changedPeerIds);
+      if (
+        version !== 1 || delegatedGroupId !== groupId || adminPeerId !== from ||
+        !Array.isArray(permissions) || !Number.isFinite(expiresAtMs) || !Number.isFinite(delegationVersion) ||
+        !Array.isArray(protectedPeerIds) || typeof ownerSigningPub !== 'string' || typeof ownerSig !== 'string' ||
+        (memberAction !== 'add' && memberAction !== 'remove') || changedPeerIds.length === 0
+      ) return res.status(400).json({ error: 'invalid admin delegation' });
+      if (expiresAtMs < nowMs()) return res.status(403).json({ error: 'admin delegation expired' });
+      const requiredPermission = memberAction === 'add' ? 'members:add' : 'members:remove';
+      if (!permissions.includes(requiredPermission)) return res.status(403).json({ error: 'admin delegation forbids operation' });
+      if (!existing || existing.provisional || existing.expiredAtMs) return res.status(409).json({ error: 'owner membership update required' });
+      if ((existing.delegationVersion || 0) !== delegationVersion) return res.status(403).json({ error: 'admin delegation version revoked' });
+      const protectedIds = normalizePeerIdList(protectedPeerIds);
+      if (!protectedIds.includes(ownerPeerId) || changedPeerIds.some((peerId) => protectedIds.includes(peerId))) {
+        return res.status(403).json({ error: 'admin cannot change protected member' });
+      }
+      const ownerDelegationVerified = verifyEd25519Signature({
+        payloadBytes: buildGroupAdminDelegationPayload({ groupId, adminPeerId: from, permissions, expiresAtMs, delegationVersion, protectedPeerIds }),
+        signatureB64: ownerSig,
+        signingPubB64: ownerSigningPub,
+      });
+      if (!ownerDelegationVerified) return res.status(401).json({ error: 'invalid admin delegation signature' });
+      const expectedMembers = new Set(existing.memberPeerIds);
+      for (const peerId of changedPeerIds) memberAction === 'add' ? expectedMembers.add(peerId) : expectedMembers.delete(peerId);
+      if (!expectedMembers.has(ownerPeerId) || normalizePeerIdList([...expectedMembers]).join(',') !== normalizedMembers.join(',')) {
+        return res.status(409).json({ error: 'membership delta mismatch' });
+      }
+      const adminVerified = verifyEd25519Signature({
+        payloadBytes: buildDelegatedGroupMembersSignaturePayload({ id, from, groupId, ownerPeerId, memberPeerIds: normalizedMembers, timestampMs: ts, ttlSeconds: ttl, memberAction, changedPeerIds, delegationVersion, delegationExpiresAtMs: expiresAtMs, delegationSignature: ownerSig }),
+        signatureB64: sig,
+        signingPubB64: signingPub,
+      });
+      if (!adminVerified) return res.status(401).json({ error: 'invalid signature' });
     }
   
     groupMemberships.set(groupId, {
       ownerPeerId,
       memberPeerIds: new Set(normalizedMembers),
+      delegationVersion: from === ownerPeerId
+        ? (body.delegationVersion === undefined ? (existing?.delegationVersion || 0) : body.delegationVersion)
+        : (existing?.delegationVersion || 0),
       updatedAtMs: nowMs(),
       provisional: false,
     });

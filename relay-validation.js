@@ -17,6 +17,21 @@ export const buildGroupEnvelopeSignaturePayload = ({ id, from, groupId, recipien
 export const buildBlobSignaturePayload = ({ id, from, groupId, fileName, mimeType, timestampMs, ttlSeconds, payloadBytes }) => Buffer.concat([Buffer.from(`${id}|${from}|${groupId}|${fileName}|${(mimeType || '').trim()}|${timestampMs}|${ttlSeconds}|`, 'utf8'), payloadBytes]);
 export const buildGroupMembersSignaturePayload = ({ id, from, groupId, ownerPeerId, memberPeerIds, timestampMs, ttlSeconds }) => Buffer.from(`${id}|${from}|${groupId}|${ownerPeerId}|${[...memberPeerIds].sort().join(',')}|${timestampMs}|${ttlSeconds}`, 'utf8');
 
+export const buildGroupAdminDelegationPayload = ({ groupId, adminPeerId, permissions, expiresAtMs, delegationVersion, protectedPeerIds }) => Buffer.from(
+  `v1|${groupId}|${adminPeerId}|${[...permissions].sort().join(',')}|${expiresAtMs}|${delegationVersion}|${[...protectedPeerIds].sort().join(',')}`,
+  'utf8',
+);
+
+export const buildOwnerGroupMembersV2SignaturePayload = ({ id, from, groupId, ownerPeerId, memberPeerIds, timestampMs, ttlSeconds, delegationVersion }) => Buffer.from(
+  `v3|${id}|${from}|${groupId}|${ownerPeerId}|${[...memberPeerIds].sort().join(',')}|${timestampMs}|${ttlSeconds}|${delegationVersion}`,
+  'utf8',
+);
+
+export const buildDelegatedGroupMembersSignaturePayload = ({ id, from, groupId, ownerPeerId, memberPeerIds, timestampMs, ttlSeconds, memberAction, changedPeerIds, delegationVersion, delegationExpiresAtMs, delegationSignature }) => Buffer.from(
+  `v2|${id}|${from}|${groupId}|${ownerPeerId}|${[...memberPeerIds].sort().join(',')}|${timestampMs}|${ttlSeconds}|${memberAction}|${[...changedPeerIds].sort().join(',')}|${delegationVersion}|${delegationExpiresAtMs}|${delegationSignature}`,
+  'utf8',
+);
+
 export function parseBase64(input) {
   if (typeof input !== 'string' || input.length === 0) return null;
   try { return Buffer.from(input, 'base64'); } catch (_) { return null; }
