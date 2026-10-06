@@ -15,7 +15,10 @@ import {
   shouldInvalidateVoipToken,
 } from './devices/registry.js';
 import { registerDeviceRoutes } from './devices/routes.js';
-import { createDedupCache } from './delivery/dedup-cache.js';
+import {
+  buildPushEventDedupBody,
+  createDedupCache,
+} from './delivery/dedup-cache.js';
 import { createPushProviders } from './delivery/providers.js';
 import { registerModerationRoutes } from './moderation/routes.js';
 import { moderationPolicyMessage, normalizeModerationAction, normalizeModerationStatus } from './moderation/workflow.js';
@@ -955,19 +958,10 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       droppedRecipients: accessAllowedRecipients.dropped,
     });
   }
-  const dedupBody = {
-    token: `virtual:${senderUserId}`,
-    data: {
-      type: typeof payload.type === 'string' ? payload.type : 'push',
-      groupId: typeof payload.groupId === 'string' ? payload.groupId : '',
-      directPeerId: typeof payload.directPeerId === 'string'
-        ? payload.directPeerId
-        : (typeof payload.calleeUserId === 'string' ? payload.calleeUserId : ''),
-      lastSeq: typeof payload.lastSeq === 'string'
-        ? payload.lastSeq
-        : (typeof payload.callId === 'string' ? payload.callId : ''),
-    },
-  };
+  const dedupBody = buildPushEventDedupBody({
+    senderUserId,
+    payload,
+  });
   const dedupResult = dedup.tryAcquire(dedupBody);
   if (dedupResult.deduped) {
     observability.recordPushEvent({ payload, delivery, deduped: true });

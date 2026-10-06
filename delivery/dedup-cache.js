@@ -1,5 +1,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+export function buildPushEventDedupBody({ senderUserId, payload }) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const rawType =
+    typeof source.type === 'string' && source.type ? source.type : 'push';
+
+  let dedupType = rawType;
+  if (rawType === 'call_invite') {
+    const callAction =
+      typeof source.callAction === 'string'
+        ? source.callAction.trim().toLowerCase()
+        : '';
+    const mediaType =
+      typeof source.mediaType === 'string'
+        ? source.mediaType.trim().toLowerCase()
+        : '';
+    const terminal = callAction === 'end' || mediaType === 'end';
+    dedupType = terminal ? 'call_invite:end' : 'call_invite:invite';
+  }
+
+  return {
+    token: `virtual:${senderUserId}`,
+    data: {
+      type: dedupType,
+      groupId: typeof source.groupId === 'string' ? source.groupId : '',
+      directPeerId:
+        typeof source.directPeerId === 'string'
+          ? source.directPeerId
+          : (typeof source.calleeUserId === 'string'
+              ? source.calleeUserId
+              : ''),
+      lastSeq:
+        typeof source.lastSeq === 'string'
+          ? source.lastSeq
+          : (typeof source.callId === 'string' ? source.callId : ''),
+    },
+  };
+}
+
 export function createDedupCache({ ttlSeconds, normalizeTokenInput }) {
   const cache = new Map(); // dedupKey -> expiresAtMs
 

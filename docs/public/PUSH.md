@@ -243,6 +243,13 @@ Fanout behavior:
   performs local presentation; iOS receives an APNs alert only when the above
   client-declared chat-content rule is met. Calls retain their separate VoIP
   path and call mute/block policy.
+- Push dedup distinguishes a call invite from its terminal end even for
+  legacy clients that send both with `type=call_invite` and the same
+  `callId`. Legacy terminal markers `callAction=end` or `mediaType=end`
+  map to an internal dedup identity `call_invite:end`, while the initial
+  invite maps to `call_invite:invite`. Duplicate copies of the same end event
+  are still suppressed. The original payload is forwarded unchanged, so old
+  and new client versions remain wire-compatible.
 
 APNs headers used by push service:
 - `apns-push-type: voip`

@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## [1.7.14-2026100601] - 2026-10-06
+
+### Fixed
+
+- Fixed Push dedup for call termination events from legacy clients. An incoming
+  `call_invite` and a later terminal event for the same `callId` are now
+  treated as distinct logical events when older clients send the terminal event
+  as `type=call_invite` with `callAction=end` and/or `mediaType=end`.
+- Preserved wire compatibility with older app versions: the server does not
+  rewrite the original payload. It only uses separate internal dedup identities
+  (`call_invite:invite` and `call_invite:end`) while still suppressing
+  duplicate copies of the same terminal event.
+- Added regression coverage for legacy `callAction=end`,
+  `mediaType=end`, and the newer explicit `type=call_end` format.
+
+
 ## [1.7.13-2026092702] - 2026-09-27
 
 ### Changed
