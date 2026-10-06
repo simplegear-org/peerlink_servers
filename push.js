@@ -7,6 +7,7 @@ import {
   isSilentWakeUp,
   isVisibleChatMessagePush,
   requiresAccessPolicy,
+  shouldUseIosBackgroundMessagePush,
 } from './delivery/notification-policy.js';
 import { PushObservability } from './observability.js';
 import {
@@ -997,7 +998,10 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = visibleChatMessage && isAndroidTarget;
-      const useIosAlertMessagePush = visibleChatMessage && isIosTarget;
+      const useIosBackgroundMessagePush = shouldUseIosBackgroundMessagePush({
+        payload,
+        platform,
+      });
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       const effectiveNotification = notification;
       const hasNotificationText = Boolean(effectiveNotification?.title || effectiveNotification?.body);
@@ -1034,35 +1038,48 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         }
         await measurePushDelivery(
           { payload, deliveryName: 'standard', provider },
-          () => pushProviders.sendApnsAlert({
-            token: target.token,
-            topic: apnsTopic,
-            payload: {
-              aps: {
-                ...(hasNotificationText || useIosAlertMessagePush
-                  ? {
-                      alert: {
-                        ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
-                        ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
-                      },
-                      sound: 'default',
-                      badge: 1,
-                      'mutable-content': 1,
-                    }
-                  : {
-                      'content-available': 1,
-                    }),
-              },
-              ...payload,
-            },
-          }),
+          () => useIosBackgroundMessagePush
+            ? pushProviders.sendApnsBackground({
+                token: target.token,
+                topic: apnsTopic,
+                payload: {
+                  aps: {
+                    'content-available': 1,
+                  },
+                  ...payload,
+                },
+              })
+            : pushProviders.sendApnsAlert({
+                token: target.token,
+                topic: apnsTopic,
+                payload: {
+                  aps: {
+                    ...(hasNotificationText
+                      ? {
+                          alert: {
+                            ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
+                            ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
+                          },
+                          sound: 'default',
+                          badge: 1,
+                          'mutable-content': 1,
+                        }
+                      : {
+                          'content-available': 1,
+                        }),
+                  },
+                  ...payload,
+                },
+              }),
         );
       } else {
         await measurePushDelivery(
           { payload, deliveryName: 'standard', provider },
           () => pushProviders.sendFcm({
             token: target.token,
-            ...(hasNotificationText && !useNativeMessageFilter
+            ...(hasNotificationText &&
+              !useNativeMessageFilter &&
+              !useIosBackgroundMessagePush
               ? {
                   notification: {
                     ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
@@ -1084,30 +1101,20 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                   },
                 }
               : {}),
-            ...(useIosAlertMessagePush
+            ...(useIosBackgroundMessagePush
               ? {
                   apns: {
                     headers: {
-                      'apns-push-type': 'alert',
-                      'apns-priority': '10',
+                      'apns-push-type': 'background',
+                      'apns-priority': '5',
                     },
                     payload: {
                       aps: {
-                        ...(hasNotificationText
-                          ? {
-                              alert: {
-                                ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
-                                ...(effectiveNotification?.body ? { body: effectiveNotification.body } : {}),
-                              },
-                              sound: 'default',
-                              badge: 1,
-                            }
-                          : {}),
-                        'mutable-content': 1,
+                        'content-available': 1,
                       },
                     },
                   },
-              }
+                }
               : {}),
             data: {
               ...payload,

@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## [1.7.15-2026100701] - 2026-10-07
+
+### Changed
+
+- Restored iOS background delivery for `direct_update`/`group_update`:
+  APNs-provider devices now use `apns-push-type: background`, priority `5`
+  and `content-available=1` with no remote alert. Legacy iOS FCM-provider
+  devices receive the equivalent APNs background override. This lets the app
+  finish relay catch-up and durable persistence before local notification
+  presentation.
+
+
 ## [1.7.14-2026100601] - 2026-10-06
 
 ### Fixed

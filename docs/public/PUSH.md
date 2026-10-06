@@ -138,7 +138,9 @@ Signature payload:
 
 Stores the recipient's push filtering snapshot for server-side filtering.
 This lets the push server decide whether `direct_update`/`group_update` may be
-sent as visible iOS alert pushes.
+forwarded to the recipient. On iOS these message-update pushes are background
+wake-ups; the app performs local presentation only after durable relay
+persistence.
 
 Request body:
 - `id` (required request id)
@@ -240,9 +242,12 @@ Fanout behavior:
   `notification`, bypasses message block/mute filtering, and sends it data-only
   on every platform, including iOS. Relay authorization remains authoritative.
 - Android visible chat messages remain data-only with high priority so the app
-  performs local presentation; iOS receives an APNs alert only when the above
-  client-declared chat-content rule is met. Calls retain their separate VoIP
-  path and call mute/block policy.
+  performs local presentation. iOS `direct_update`/`group_update` messages
+  are also data-only, but use APNs background delivery
+  (`content-available=1`, push type `background`, priority `5`) so relay
+  catch-up can persist the message before the app creates its local
+  notification. Calls retain their separate VoIP path and call mute/block
+  policy.
 - Push dedup distinguishes a call invite from its terminal end even for
   legacy clients that send both with `type=call_invite` and the same
   `callId`. Legacy terminal markers `callAction=end` or `mediaType=end`
@@ -252,9 +257,10 @@ Fanout behavior:
   and new client versions remain wire-compatible.
 
 APNs headers used by push service:
-- `apns-push-type: voip`
-- `apns-priority: 10`
-- `apns-topic: <bundle_id>.voip`
+- message background wake: `apns-push-type: background`,
+  `apns-priority: 5`, `apns-topic: <bundle_id>`
+- VoIP calls: `apns-push-type: voip`, `apns-priority: 10`,
+  `apns-topic: <bundle_id>.voip`
 - APNs transport is sent over native HTTP/2 client in `push.js` (not `fetch`), because APNs endpoint is HTTP/2-only.
 
 ### `POST /moderation/reports`
