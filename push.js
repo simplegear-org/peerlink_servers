@@ -7,7 +7,7 @@ import {
   isSilentWakeUp,
   isVisibleChatMessagePush,
   requiresAccessPolicy,
-  shouldUseIosBackgroundMessagePush,
+  iosMessagePushMode,
 } from './delivery/notification-policy.js';
 import { PushObservability } from './observability.js';
 import {
@@ -998,10 +998,14 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
       const isIosTarget = platform === 'ios';
       const isAppleTarget = platform === 'ios' || platform === 'macos';
       const useNativeMessageFilter = visibleChatMessage && isAndroidTarget;
-      const useIosBackgroundMessagePush = shouldUseIosBackgroundMessagePush({
+      const iosMessageMode = iosMessagePushMode({
         payload,
         platform,
+        visibleChatMessage,
       });
+      const useIosAlertWithBackgroundWake =
+        iosMessageMode === 'alert_background';
+      const useIosBackgroundOnly = iosMessageMode === 'background';
       const provider = (target.messageProvider || 'fcm').toLowerCase();
       const effectiveNotification = notification;
       const hasNotificationText = Boolean(effectiveNotification?.title || effectiveNotification?.body);
@@ -1038,7 +1042,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
         }
         await measurePushDelivery(
           { payload, deliveryName: 'standard', provider },
-          () => useIosBackgroundMessagePush
+          () => useIosBackgroundOnly
             ? pushProviders.sendApnsBackground({
                 token: target.token,
                 topic: apnsTopic,
@@ -1063,6 +1067,9 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                           sound: 'default',
                           badge: 1,
                           'mutable-content': 1,
+                          ...(useIosAlertWithBackgroundWake
+                            ? { 'content-available': 1 }
+                            : {}),
                         }
                       : {
                           'content-available': 1,
@@ -1079,7 +1086,7 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
             token: target.token,
             ...(hasNotificationText &&
               !useNativeMessageFilter &&
-              !useIosBackgroundMessagePush
+              !useIosAlertWithBackgroundWake
               ? {
                   notification: {
                     ...(effectiveNotification?.title ? { title: effectiveNotification.title } : {}),
@@ -1101,21 +1108,46 @@ app.post('/events/push', requireAuth, requireSignedRequest(buildPushEventSignatu
                   },
                 }
               : {}),
-            ...(useIosBackgroundMessagePush
+            ...(useIosAlertWithBackgroundWake
               ? {
                   apns: {
                     headers: {
-                      'apns-push-type': 'background',
-                      'apns-priority': '5',
+                      'apns-push-type': 'alert',
+                      'apns-priority': '10',
                     },
                     payload: {
                       aps: {
+                        alert: {
+                          ...(effectiveNotification?.title
+                            ? { title: effectiveNotification.title }
+                            : {}),
+                          ...(effectiveNotification?.body
+                            ? { body: effectiveNotification.body }
+                            : {}),
+                        },
+                        sound: 'default',
+                        badge: 1,
+                        'mutable-content': 1,
                         'content-available': 1,
                       },
                     },
                   },
                 }
-              : {}),
+              : useIosBackgroundOnly
+                ? {
+                    apns: {
+                      headers: {
+                        'apns-push-type': 'background',
+                        'apns-priority': '5',
+                      },
+                      payload: {
+                        aps: {
+                          'content-available': 1,
+                        },
+                      },
+                    },
+                  }
+                : {}),
             data: {
               ...payload,
             },

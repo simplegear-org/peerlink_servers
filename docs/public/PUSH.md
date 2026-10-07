@@ -138,9 +138,10 @@ Signature payload:
 
 Stores the recipient's push filtering snapshot for server-side filtering.
 This lets the push server decide whether `direct_update`/`group_update` may be
-forwarded to the recipient. On iOS these message-update pushes are background
-wake-ups; the app performs local presentation only after durable relay
-persistence.
+forwarded to the recipient. For an allowed visible iOS chat message the server
+keeps the system alert and also requests background execution with
+`content-available=1`. Blocked or muted senders are still filtered before any
+APNs/FCM send.
 
 Request body:
 - `id` (required request id)
@@ -242,12 +243,14 @@ Fanout behavior:
   `notification`, bypasses message block/mute filtering, and sends it data-only
   on every platform, including iOS. Relay authorization remains authoritative.
 - Android visible chat messages remain data-only with high priority so the app
-  performs local presentation. iOS `direct_update`/`group_update` messages
-  are also data-only, but use APNs background delivery
-  (`content-available=1`, push type `background`, priority `5`) so relay
-  catch-up can persist the message before the app creates its local
-  notification. Calls retain their separate VoIP path and call mute/block
-  policy.
+  performs local presentation. Allowed visible iOS `direct_update`/
+  `group_update` messages use one APNs alert payload with
+  `apns-push-type: alert`, priority `10`, the normal alert/sound/badge and
+  `content-available=1`. The alert remains visible even when iOS declines the
+  background execution opportunity; when iOS grants it, the client can run
+  relay catch-up in the same delivery. Service/data-only iOS message wake-ups
+  remain `apns-push-type: background`, priority `5`, with no alert. Calls
+  retain their separate VoIP path and call mute/block policy.
 - Push dedup distinguishes a call invite from its terminal end even for
   legacy clients that send both with `type=call_invite` and the same
   `callId`. Legacy terminal markers `callAction=end` or `mediaType=end`
@@ -257,7 +260,10 @@ Fanout behavior:
   and new client versions remain wire-compatible.
 
 APNs headers used by push service:
-- message background wake: `apns-push-type: background`,
+- visible iOS chat message: `apns-push-type: alert`,
+  `apns-priority: 10`, `apns-topic: <bundle_id>`,
+  `aps.content-available=1`
+- service/data-only iOS message wake: `apns-push-type: background`,
   `apns-priority: 5`, `apns-topic: <bundle_id>`
 - VoIP calls: `apns-push-type: voip`, `apns-priority: 10`,
   `apns-topic: <bundle_id>.voip`

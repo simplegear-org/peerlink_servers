@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## [1.7.16-2026100702] - 2026-10-07
+
+### Fixed
+
+- Restored visible iOS message notifications while preserving the background
+  wake opportunity. Allowed `direct_update`/`group_update` now use one APNs
+  alert payload with priority `10`, normal alert/sound/badge and
+  `content-available=1`; legacy iOS FCM-provider devices receive the
+  equivalent APNs alert override.
+- Service/data-only iOS message wake-ups remain background pushes with priority
+  `5` and no alert.
+- Server-side block, contacts-only and message-mute decisions are unchanged and
+  still run before push fanout. Android message delivery and call/VoIP routing
+  are unchanged.
+
+
 ## [1.7.15-2026100701] - 2026-10-07
 
 ### Changed
